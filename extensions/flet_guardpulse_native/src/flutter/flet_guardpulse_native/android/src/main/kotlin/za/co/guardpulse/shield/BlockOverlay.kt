@@ -34,7 +34,19 @@ class BlockOverlay(private val service: AccessibilityService) {
 
     val showing: Boolean get() = view != null
 
-    fun show(key: String, title: String, message: String, button: String, onButton: () -> Unit) {
+    /**
+     * ``button = null`` shows no button (the caller closes the cover itself).
+     * ``focusable = false`` leaves input focus with the app underneath, so
+     * accessibility actions like typing into its address bar still work.
+     */
+    fun show(
+        key: String,
+        title: String,
+        message: String,
+        button: String?,
+        focusable: Boolean = true,
+        onButton: () -> Unit,
+    ) {
         if (this.key == key && view != null) return
         hide()
         val root = LinearLayout(service).apply {
@@ -53,23 +65,27 @@ class BlockOverlay(private val service: AccessibilityService) {
         root.addView(text(message, 15f, 0xFF8FA3C7.toInt()).apply {
             (layoutParams as LinearLayout.LayoutParams).topMargin = px(12)
         })
-        root.addView(text(button, 16f, 0xFF06122B.toInt(), bold = true).apply {
-            background = GradientDrawable().apply {
-                cornerRadius = px(28).toFloat()
-                colors = intArrayOf(0xFF1D50C5.toInt(), 0xFF23C6C0.toInt())
-                orientation = GradientDrawable.Orientation.LEFT_RIGHT
-            }
-            setTextColor(0xFFFFFFFF.toInt())
-            setPadding(px(32), px(14), px(32), px(14))
-            (layoutParams as LinearLayout.LayoutParams).topMargin = px(32)
-            isClickable = true
-            setOnClickListener { onButton() }
-        })
+        if (button != null) {
+            root.addView(text(button, 16f, 0xFF06122B.toInt(), bold = true).apply {
+                background = GradientDrawable().apply {
+                    cornerRadius = px(28).toFloat()
+                    colors = intArrayOf(0xFF1D50C5.toInt(), 0xFF23C6C0.toInt())
+                    orientation = GradientDrawable.Orientation.LEFT_RIGHT
+                }
+                setTextColor(0xFFFFFFFF.toInt())
+                setPadding(px(32), px(14), px(32), px(14))
+                (layoutParams as LinearLayout.LayoutParams).topMargin = px(32)
+                isClickable = true
+                setOnClickListener { onButton() }
+            })
+        }
+        var flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+        if (!focusable) flags = flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            flags,
             PixelFormat.TRANSLUCENT,
         )
         try {
