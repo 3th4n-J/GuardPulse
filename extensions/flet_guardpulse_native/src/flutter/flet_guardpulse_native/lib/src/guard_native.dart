@@ -22,6 +22,11 @@ class GuardNativeService extends FletService {
       if (result is Map) {
         return Map<String, dynamic>.from(result);
       }
+      if (result is List) {
+        return result
+            .map((e) => e is Map ? Map<String, dynamic>.from(e) : e)
+            .toList();
+      }
       return result;
     } on PlatformException catch (e) {
       debugPrint("GuardNative.$name failed: ${e.code} ${e.message}");

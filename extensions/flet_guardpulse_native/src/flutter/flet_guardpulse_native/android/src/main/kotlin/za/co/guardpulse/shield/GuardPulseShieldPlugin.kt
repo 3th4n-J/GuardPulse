@@ -5,8 +5,11 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.net.VpnService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -65,19 +68,66 @@ class GuardPulseShieldPlugin :
                 GuardVpnService.send(context, GuardVpnService.ACTION_STOP)
                 result.success(true)
             }
-            "reload_policy" -> {
-                if (GuardVpnService.running) GuardVpnService.send(context, GuardVpnService.ACTION_RELOAD)
-                result.success(GuardVpnService.running)
-            }
-            "open_vpn_settings" -> {
-                val activity = binding?.activity
-                val intent = Intent(Settings.ACTION_VPN_SETTINGS)
-                if (activity != null) activity.startActivity(intent)
-                else context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            "configure" -> {
+                val folder = call.argument<String>("folder")
+                if (!folder.isNullOrBlank()) Store.setFolder(context, folder)
+                GuardAccessibilityService.instance?.reload()
                 result.success(true)
             }
+            "reload_policy" -> {
+                if (GuardVpnService.running) GuardVpnService.send(context, GuardVpnService.ACTION_RELOAD)
+                GuardAccessibilityService.instance?.reload()
+                result.success(true)
+            }
+            "open_vpn_settings" -> {
+                open(Intent(Settings.ACTION_VPN_SETTINGS))
+                result.success(true)
+            }
+            "open_accessibility_settings" -> {
+                open(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                result.success(true)
+            }
+            "open_app_info" -> {
+                // Android 13+ hides accessibility for sideloaded apps until
+                // "Allow restricted settings" is tapped in App info's menu.
+                open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
+                result.success(true)
+            }
+            "stop_overlay" -> {
+                val service = GuardAccessibilityService.instance
+                if (service != null) service.stopByApp() else Store.setOverlayWanted(context, false)
+                result.success(true)
+            }
+            "list_apps" -> listApps(result)
             else -> result.notImplemented()
         }
+    }
+
+    private fun open(intent: Intent) {
+        val activity = binding?.activity
+        if (activity != null) activity.startActivity(intent)
+        else context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    /** Launchable apps (label + package), off the main thread; labels can be slow to load. */
+    private fun listApps(result: MethodChannel.Result) {
+        val main = Handler(Looper.getMainLooper())
+        Thread {
+            val pm = context.packageManager
+            val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            val infos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.queryIntentActivities(launcher, PackageManager.ResolveInfoFlags.of(0))
+            } else {
+                @Suppress("DEPRECATION")
+                pm.queryIntentActivities(launcher, 0)
+            }
+            val apps = infos
+                .map { mapOf("package" to it.activityInfo.packageName, "label" to it.loadLabel(pm).toString()) }
+                .filter { it["package"] != context.packageName }
+                .distinctBy { it["package"] }
+                .sortedBy { it["label"]!!.lowercase() }
+            main.post { result.success(apps) }
+        }.start()
     }
 
     private fun status(): Map<String, Any?> {
@@ -99,6 +149,12 @@ class GuardPulseShieldPlugin :
             "forwarded" to GuardVpnService.forwarded.get(),
             "private_dns_mode" to pdnsMode,
             "private_dns_host" to pdnsHost,
+            "overlay_enabled" to GuardAccessibilityService.isEnabled(context),
+            "overlay_wanted" to Store.overlayWanted(context),
+            "overlay_connected" to (GuardAccessibilityService.instance != null),
+            "overlay_blocked_apps" to GuardAccessibilityService.blockedApps.get(),
+            "overlay_blocked_sites" to GuardAccessibilityService.blockedSites.get(),
+            "overlay_blocked_feeds" to GuardAccessibilityService.blockedFeeds.get(),
         )
     }
 

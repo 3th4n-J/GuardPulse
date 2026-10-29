@@ -8,6 +8,19 @@ import org.json.JSONObject
 
 enum class Decision { ALLOW, BLOCK, DEFAULT }
 
+/** A scheduled app lock; mirrors guardpulse.guard.Schedule.active_at (bit 0 of ``days`` = Monday). */
+class LockWindow(val days: Int, val startMin: Int, val endMin: Int, val packages: Set<String>) {
+    fun activeAt(mondayIndex: Int, minute: Int): Boolean {
+        if (startMin <= endMin) {
+            return (days shr mondayIndex) and 1 == 1 && minute >= startMin && minute < endMin
+        }
+        // overnight: the evening part belongs to today, the morning part to yesterday
+        if (minute >= startMin) return (days shr mondayIndex) and 1 == 1
+        val yesterday = (mondayIndex + 6) % 7
+        return (days shr yesterday) and 1 == 1 && minute < endMin
+    }
+}
+
 /**
  * The rule set the Python side writes to policy.json (signed with policy.sig).
  * Matching mirrors guardpulse/domains.py: a rule covers the host and every
@@ -18,8 +31,21 @@ class Policy(
     val allow: List<String>,
     val familyDns: Boolean,
     familyServers: List<String>,
+    val apps: Set<String> = emptySet(),
+    val schedules: List<LockWindow> = emptyList(),
+    private val flags: Map<String, Boolean> = emptyMap(),
 ) {
     val upstream: List<String> = if (familyDns) familyServers else PLAIN_DNS
+
+    /** Protective switches from Settings (browser_overlay, feed_youtube_shorts, ...); on unless set. */
+    fun flag(key: String): Boolean = flags[key] ?: true
+
+    /**
+     * Always-blocked apps plus apps inside an active schedule window.
+     * ``mondayIndex`` is 0 for Monday like Python's ``weekday()``.
+     */
+    fun appBlocked(pkg: String, mondayIndex: Int, minute: Int): Boolean =
+        pkg in apps || schedules.any { pkg in it.packages && it.activeAt(mondayIndex, minute) }
 
     fun decide(rawHost: String): Decision {
         val host = rawHost.trimEnd('.').lowercase()
@@ -82,15 +108,34 @@ class Policy(
             val root = JSONObject(String(payload, Charsets.UTF_8))
             val settings = root.optJSONObject("settings") ?: JSONObject()
             val dns = root.optJSONObject("dns")?.optJSONArray("v4")
+            val flags = mutableMapOf<String, Boolean>()
+            for (key in settings.keys()) {
+                val value = settings.opt(key)
+                if (value is Boolean) flags[key] = value
+            }
+            val windows = root.optJSONArray("schedules")
             return Policy(
                 block = root.optJSONArray("block").toStrings(),
                 allow = root.optJSONArray("allow").toStrings(),
                 familyDns = settings.optBoolean("family_dns", true),
                 familyServers = dns.toStrings().ifEmpty { FAMILY_DNS },
+                // package names are case-sensitive, so no lower-casing here
+                apps = root.optJSONArray("apps").toStrings(lower = false).toSet(),
+                schedules = if (windows == null) emptyList() else (0 until windows.length()).map {
+                    val w = windows.getJSONObject(it)
+                    LockWindow(
+                        days = w.optInt("days"),
+                        startMin = w.optInt("start_min"),
+                        endMin = w.optInt("end_min"),
+                        packages = w.optJSONArray("packages").toStrings(lower = false).toSet(),
+                    )
+                },
+                flags = flags,
             )
         }
 
-        private fun org.json.JSONArray?.toStrings(): List<String> =
-            if (this == null) emptyList() else (0 until length()).map { getString(it).lowercase() }
+        private fun org.json.JSONArray?.toStrings(lower: Boolean = true): List<String> =
+            if (this == null) emptyList()
+            else (0 until length()).map { getString(it).let { s -> if (lower) s.lowercase() else s } }
     }
 }

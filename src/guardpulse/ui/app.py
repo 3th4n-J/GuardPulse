@@ -91,7 +91,7 @@ class App:
             return
         if success:
             self.toast(success)
-        if self.native.filter_running:
+        if self.native.available:
             self.page.run_task(self.native.reload_policy)
         self.render()
 
@@ -122,6 +122,77 @@ class App:
 
     def open_vpn_settings(self) -> None:
         self.page.run_task(self.native.open_vpn_settings)
+
+    # --- security overlay (Android) ------------------------------------------
+
+    def enable_overlay(self) -> None:
+        """Android won't let apps switch accessibility on themselves - walk the user through it."""
+
+        def step(n: str, text: str) -> ft.Control:
+            return ft.Row(
+                [
+                    ft.Container(
+                        ft.Text(n, weight=ft.FontWeight.W_800, color=theme.NAVY),
+                        width=26,
+                        height=26,
+                        border_radius=13,
+                        bgcolor=theme.CYAN,
+                        alignment=ft.Alignment.CENTER,
+                    ),
+                    ft.Text(text, size=13, color=theme.TEXT, expand=True),
+                ],
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            )
+
+        self.open_dialog(
+            ft.AlertDialog(
+                icon=ft.Icon(ft.Icons.LAYERS_OUTLINED, color=theme.CYAN, size=32),
+                title=ft.Text("Turn on the security overlay", text_align=ft.TextAlign.CENTER),
+                content=ft.Column(
+                    [
+                        step("1", "Tap Accessibility below, open Installed apps (or Downloaded apps) "
+                                  "and switch GuardPulse security overlay on."),
+                        step("2", "If Android says it's a restricted setting: tap App info, open the "
+                                  "⋮ menu, choose Allow restricted settings, then try step 1 again."),
+                        step("3", "Come back here - the overlay card turns green once it's running."),
+                        ft.Text(
+                            "GuardPulse only reads which app is open and your browser's address bar. "
+                            "Nothing leaves this phone.",
+                            size=11,
+                            color=theme.MUTED,
+                        ),
+                    ],
+                    tight=True,
+                    spacing=12,
+                    width=360,
+                ),
+                actions=[
+                    ft.TextButton("App info", on_click=lambda _: self.page.run_task(self.native.open_app_info)),
+                    ft.FilledButton(
+                        "Accessibility",
+                        icon=ft.Icons.OPEN_IN_NEW,
+                        on_click=lambda _: self._open_accessibility(),
+                    ),
+                ],
+            )
+        )
+
+    def _open_accessibility(self) -> None:
+        self.close_dialog()
+        self.guard.note("overlay.setup_opened")
+        self.page.run_task(self.native.open_accessibility_settings)
+
+    def disable_overlay(self) -> None:
+        def gate():
+            self.guard.authorise_overlay_off()
+            self.page.run_task(self._stop_overlay)
+
+        self.act(gate)
+
+    async def _stop_overlay(self) -> None:
+        await self.native.disable_overlay()
+        self.toast("Security overlay is off")
+        self.render()
 
     def ask_pin(self, reason: str, then: Callable[[], None] | None = None) -> None:
         field = ft.TextField(
@@ -291,7 +362,15 @@ class App:
         events = self.native.drain_events()
         for event in events:
             self.guard.record_native(event.get("event", "unknown"), event.get("detail", ""))
-        keys = ("vpn_running", "vpn_prepared", "always_on", "private_dns_mode", "private_dns_host")
+        keys = (
+            "vpn_running",
+            "vpn_prepared",
+            "always_on",
+            "private_dns_mode",
+            "private_dns_host",
+            "overlay_enabled",
+            "overlay_wanted",
+        )
         before = {k: self.native.state.get(k) for k in keys}
         await self.native.refresh()
         # counters change constantly; only re-render (which resets scroll) on real state changes

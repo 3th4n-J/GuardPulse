@@ -21,7 +21,7 @@ except ImportError:  # pragma: no cover - depends on the environment
     GuardNative = None
 
 # native events that mean protection was weakened outside the app
-TAMPER_EVENTS = {"vpn_revoked", "policy_signature_invalid"}
+TAMPER_EVENTS = {"vpn_revoked", "policy_signature_invalid", "accessibility_disabled"}
 FAMILY_PRIVATE_DNS = "family.cloudflare-dns.com"
 
 
@@ -40,6 +40,8 @@ class NativeBridge:
         self.folder = folder
         self.service = None
         self.state: dict[str, Any] = {}
+        self.installed_apps: list[dict[str, str]] = []
+        self._configured = False
         if page is not None and GuardNative is not None and page.platform == ft.PagePlatform.ANDROID:
             self.service = GuardNative()
             page.services.append(self.service)
@@ -62,7 +64,14 @@ class NativeBridge:
                 available=self.available,
                 active=self.filter_running,
             ),
-            Component("accessibility", "Security overlay", "Covers blocked sites, apps and short-video feeds", 3),
+            Component(
+                "accessibility",
+                "Security overlay",
+                self._overlay_detail(),
+                3,
+                available=self.available,
+                active=self.overlay_running,
+            ),
             Component("device_admin", "Uninstall protection", "Needs the partner PIN to remove GuardPulse", 4),
         ]
 
@@ -74,6 +83,30 @@ class NativeBridge:
         blocked = self.state.get("blocked", 0)
         always_on = " · Always-on" if self.state.get("always_on") else ""
         return f"Filtering every app · {blocked} lookups blocked{always_on}"
+
+    @property
+    def overlay_running(self) -> bool:
+        return bool(self.state.get("overlay_enabled"))
+
+    def _overlay_detail(self) -> str:
+        if not self.available:
+            return "Covers blocked sites, apps and short-video feeds (Android only)"
+        if not self.overlay_running:
+            return "Off - tap Turn on, then switch GuardPulse on in Accessibility"
+        s = self.state
+        return (
+            f"Watching every app · {s.get('overlay_blocked_apps', 0)} apps, "
+            f"{s.get('overlay_blocked_sites', 0)} sites, {s.get('overlay_blocked_feeds', 0)} feeds stopped"
+        )
+
+    def overlay_off_warning(self) -> str | None:
+        """The overlay was on but Android no longer has it enabled."""
+        if self.state.get("overlay_wanted") and not self.state.get("overlay_enabled"):
+            return (
+                "The security overlay is switched off in Android's Accessibility settings. "
+                "Your partner has been alerted. Turn it back on to keep blocked apps covered."
+            )
+        return None
 
     def private_dns_warning(self) -> str | None:
         """Private DNS set to another provider bypasses the filter."""
@@ -96,6 +129,11 @@ class NativeBridge:
         if not self.service:
             return
         try:
+            if not self._configured and self.folder is not None:
+                # the overlay may run without the VPN ever starting, so it
+                # needs to learn where policy.json lives independently
+                await self.service.configure(str(self.folder))
+                self._configured = True
             self.state = await self.service.status()
         except Exception:  # noqa: BLE001 - a status failure must never break the UI
             self.state = {}
@@ -116,12 +154,33 @@ class NativeBridge:
             await self.refresh()
 
     async def reload_policy(self) -> None:
-        if self.service and self.filter_running:
+        if self.service and (self.filter_running or self.overlay_running):
             await self.service.reload_policy()
 
     async def open_vpn_settings(self) -> None:
         if self.service:
             await self.service.open_vpn_settings()
+
+    async def open_accessibility_settings(self) -> None:
+        if self.service:
+            await self.service.open_accessibility_settings()
+
+    async def open_app_info(self) -> None:
+        if self.service:
+            await self.service.open_app_info()
+
+    async def disable_overlay(self) -> None:
+        if self.service:
+            await self.service.stop_overlay()
+            await self.refresh()
+
+    async def load_installed_apps(self) -> list[dict[str, str]]:
+        if self.service and not self.installed_apps:
+            try:
+                self.installed_apps = await self.service.list_apps()
+            except Exception:  # noqa: BLE001 - picker falls back to manual entry
+                self.installed_apps = []
+        return self.installed_apps
 
     # --- events from Kotlin -------------------------------------------------
 
