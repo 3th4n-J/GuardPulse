@@ -136,13 +136,21 @@ cd src && ../.venv/Scripts/flet run main.py
 .venv/Scripts/python.exe -m unittest discover -s tests -v
 ```
 
-**Build the Android APK:**
+**Build a signed release APK** (PowerShell). The first time, create the GuardPulse release key; it's stored outside the repo in `%USERPROFILE%\Keystores\`:
 
 ```bash
-.venv/Scripts/flet build apk --split-per-abi
+.\build-release.ps1 -NewKey
 ```
 
-> Release APKs go out as GitHub releases, signed with the project keystore. Never publish a debug-signed build: Android rejects it as an update over a properly signed install.
+Then, for every release:
+
+```bash
+.\build-release.ps1
+```
+
+The script prompts for the keystore password, increases the Android version code, writes `build\apk\GuardPulse-<version>.apk` and prints the signer, so you can confirm it isn't `CN=Android Debug`.
+
+> **Back up the keystore and its password.** Every future update must be signed with the same key. Lose it and existing installs can never be updated. Never publish a debug-signed build: Android refuses to install it over a properly signed one.
 
 ### Project layout
 
