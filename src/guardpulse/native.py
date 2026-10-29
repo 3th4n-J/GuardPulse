@@ -21,7 +21,12 @@ except ImportError:  # pragma: no cover - depends on the environment
     GuardNative = None
 
 # native events that mean protection was weakened outside the app
-TAMPER_EVENTS = {"vpn_revoked", "policy_signature_invalid", "accessibility_disabled"}
+TAMPER_EVENTS = {
+    "vpn_revoked",
+    "policy_signature_invalid",
+    "accessibility_disabled",
+    "device_admin_removed",
+}
 # GuardPulse release key (CN=Ethan Johnston, OU=GuardPulse); see build-release.ps1
 RELEASE_SIGNER_SHA256 = "6aba3b6c14d4f19c9373ec672320ce6724499a94e34a7ad489d1b3f08b0e6db8"
 FAMILY_PRIVATE_DNS = "family.cloudflare-dns.com"
@@ -77,8 +82,35 @@ class NativeBridge:
                 available=self.available,
                 active=self.overlay_running,
             ),
-            Component("device_admin", "Uninstall protection", "Needs the partner PIN to remove GuardPulse", 4),
+            Component(
+                "device_admin",
+                "Uninstall protection",
+                self._admin_detail(),
+                4,
+                available=self.available,
+                active=self.admin_active,
+            ),
         ]
+
+    @property
+    def admin_active(self) -> bool:
+        return bool(self.state.get("device_admin_active"))
+
+    def _admin_detail(self) -> str:
+        if not self.available:
+            return "Needs the partner PIN to remove GuardPulse (Android only)"
+        if not self.admin_active:
+            return "Off - turn on to block uninstalling GuardPulse"
+        return "On - uninstalling and its Settings pages need the partner PIN"
+
+    def admin_off_warning(self) -> str | None:
+        """Uninstall protection was on but device admin is no longer active."""
+        if self.state.get("device_admin_wanted") and not self.state.get("device_admin_active"):
+            return (
+                "Uninstall protection was switched off. Your partner has been alerted. "
+                "Turn it back on to keep GuardPulse from being removed."
+            )
+        return None
 
     def _vpn_detail(self) -> str:
         if not self.available:
@@ -187,6 +219,18 @@ class NativeBridge:
     async def disable_overlay(self) -> None:
         if self.service:
             await self.service.stop_overlay()
+            await self.refresh()
+
+    async def enable_uninstall_protection(self) -> bool:
+        if not self.service:
+            return False
+        await self.service.request_device_admin()
+        await self.refresh()
+        return self.admin_active
+
+    async def disable_uninstall_protection(self) -> None:
+        if self.service:
+            await self.service.remove_device_admin()
             await self.refresh()
 
     async def load_installed_apps(self) -> list[dict[str, str]]:

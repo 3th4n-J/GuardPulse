@@ -32,6 +32,7 @@ class GuardAccessibilityService : AccessibilityService() {
 
         private const val FEED_DEBOUNCE_MS = 1200L
         private const val ESCAPE_WINDOW_MS = 2500L
+        private const val SETTINGS_GRANT_MS = 90_000L
         private const val MAX_NODES = 600
         private const val BLANK_PAGE = "about:blank"
 
@@ -54,6 +55,8 @@ class GuardAccessibilityService : AccessibilityService() {
     private var lastFeedBounce = 0L
     private var escapingUntil = 0L
     private val main = Handler(Looper.getMainLooper())
+    private val pinGate = PinGate()
+    private var settingsGrantedUntil = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -76,6 +79,8 @@ class GuardAccessibilityService : AccessibilityService() {
             overlay.hide()
         }
 
+        if (checkSettings(pkg)) return
+
         val now = Calendar.getInstance()
         val mondayIndex = (now.get(Calendar.DAY_OF_WEEK) + 5) % 7
         val minute = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
@@ -90,6 +95,70 @@ class GuardAccessibilityService : AccessibilityService() {
         Detectors.feedFor(pkg)?.let { feed ->
             if (policy.flag(feed.setting)) checkFeed(feed)
         }
+    }
+
+    // --- settings guard ---------------------------------------------------------
+
+    /**
+     * On a Settings / installer screen that could switch GuardPulse off, ask for
+     * the partner PIN before letting it through. Returns true when it handled the
+     * screen (so other detectors are skipped).
+     */
+    private fun checkSettings(pkg: String): Boolean {
+        if (!policy.flag("settings_guard")) return false
+        val folder = Store.folder(this) ?: return false
+        if (!NativeAuth.hasPin(folder)) return false
+        if (SystemClock.elapsedRealtime() < settingsGrantedUntil) return false
+
+        val root = rootInActiveWindow ?: return false
+        val reason = SettingsTargets.guardedReason(pkg, appLabel(), collectTexts(root)) ?: run {
+            if (overlay.key?.startsWith("settings:") == true) overlay.hide()
+            return false
+        }
+        if (overlay.key == "settings:$reason") return true
+        overlay.showPinPrompt(
+            key = "settings:$reason",
+            title = "Partner PIN needed",
+            message = "Enter your accountability partner's PIN to $reason.",
+            onPin = { entered ->
+                val wait = pinGate.lockedForMs
+                if (wait > 0) {
+                    "Too many wrong tries. Wait ${wait / 1000 + 1}s."
+                } else if (pinGate.attempt(NativeAuth.verify(folder, entered))) {
+                    settingsGrantedUntil = SystemClock.elapsedRealtime() + SETTINGS_GRANT_MS
+                    Store.event(this, "settings_unlocked", reason)
+                    null
+                } else {
+                    Store.event(this, "settings_pin_failed", reason)
+                    "Incorrect PIN."
+                }
+            },
+            onBack = { performGlobalAction(GLOBAL_ACTION_BACK) },
+        )
+        return true
+    }
+
+    private fun appLabel(): String =
+        try {
+            applicationInfo.loadLabel(packageManager).toString()
+        } catch (e: Exception) {
+            "GuardPulse"
+        }
+
+    /** Bounded collection of visible text + content descriptions on screen. */
+    private fun collectTexts(root: AccessibilityNodeInfo): List<String> {
+        val texts = mutableListOf<String>()
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var seen = 0
+        while (queue.isNotEmpty() && seen < MAX_NODES && texts.size < 120) {
+            val node = queue.removeFirst()
+            seen++
+            node.text?.let { if (it.isNotBlank()) texts.add(it.toString()) }
+            node.contentDescription?.let { if (it.isNotBlank()) texts.add(it.toString()) }
+            for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+        }
+        return texts
     }
 
     // --- detectors --------------------------------------------------------------

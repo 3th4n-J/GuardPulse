@@ -73,6 +73,31 @@ def verify_pin(pin: str, stored: str) -> bool:
     return hmac.compare_digest(digest.hex(), digest_hex)
 
 
+# The Kotlin settings-guard runs while the Flet app is closed and has no scrypt,
+# so the PIN is also written as a PBKDF2-HMAC-SHA256 hash the native layer can
+# verify with javax.crypto. The file is HMAC-sealed, so editing it is detected.
+PBKDF2_ITERATIONS = 200_000
+
+
+def pbkdf2_hash(pin: str, salt: bytes | None = None) -> str:
+    salt = salt or os.urandom(16)
+    digest = hashlib.pbkdf2_hmac("sha256", pin.encode(), salt, PBKDF2_ITERATIONS, dklen=32)
+    return f"pbkdf2${PBKDF2_ITERATIONS}${salt.hex()}${digest.hex()}"
+
+
+def verify_pbkdf2(pin: str, stored: str) -> bool:
+    try:
+        scheme, iters, salt_hex, digest_hex = stored.split("$")
+    except ValueError:
+        return False
+    if scheme != "pbkdf2":
+        return False
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", (pin or "").encode(), bytes.fromhex(salt_hex), int(iters), dklen=len(digest_hex) // 2
+    )
+    return hmac.compare_digest(digest.hex(), digest_hex)
+
+
 def lockout_seconds(failed_attempts: int) -> int:
     """Back-off after repeated wrong PINs/codes: 3 free tries, then 30 s doubling to 1 h."""
     if failed_attempts < 3:

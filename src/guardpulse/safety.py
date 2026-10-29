@@ -23,6 +23,8 @@ from pathlib import Path
 
 DB_NAME = "guardpulse.db"
 KEY_NAME = "seal.key"
+# the offline PIN-verify files the native settings-guard reads (written by guard.py)
+SIDE_FILES = ("pin.verify", "pin.verify.sig")
 BACKUP_DIR = "backups"
 KEEP_SNAPSHOTS = 3
 
@@ -42,6 +44,10 @@ def snapshot(folder: Path, conn: sqlite3.Connection, label: str, keep: int = KEE
     key = folder / KEY_NAME
     if key.exists():
         shutil.copy2(key, target.with_suffix(".key"))
+    for name in SIDE_FILES:
+        side = folder / name
+        if side.exists():
+            shutil.copy2(side, target.with_name(target.stem + "." + name))
     _prune(target_dir, keep)
     return target
 
@@ -58,6 +64,8 @@ def _prune(target_dir: Path, keep: int) -> None:
     for old in sorted(target_dir.glob("guardpulse-*.db"), key=lambda p: p.name, reverse=True)[keep:]:
         old.unlink(missing_ok=True)
         old.with_suffix(".key").unlink(missing_ok=True)
+        for name in SIDE_FILES:
+            old.with_name(old.stem + "." + name).unlink(missing_ok=True)
 
 
 def legacy_locations(folder: Path) -> list[Path]:
@@ -112,21 +120,28 @@ def recover_if_missing(folder: Path) -> str | None:
     for old in legacy_locations(folder):
         src = old / DB_NAME
         if src.is_file() and _valid_db(src):
-            _restore(src, old / KEY_NAME, folder)
+            # a sibling build stores side files plainly: old/seal.key, old/pin.verify
+            extras = {KEY_NAME: old / KEY_NAME} | {name: old / name for name in SIDE_FILES}
+            _restore(src, extras, folder)
             return f"moved data from {old}"
     for snap in snapshots(folder):
         if _valid_db(snap):
-            _restore(snap, snap.with_suffix(".key"), folder)
+            # a snapshot prefixes them: guardpulse-...key, guardpulse-...pin.verify
+            extras = {KEY_NAME: snap.with_suffix(".key")} | {
+                name: snap.with_name(snap.stem + "." + name) for name in SIDE_FILES
+            }
+            _restore(snap, extras, folder)
             return f"restored snapshot {snap.name}"
     return None
 
 
-def _restore(db_src: Path, key_src: Path, folder: Path) -> None:
+def _restore(db_src: Path, extras: dict[str, Path], folder: Path) -> None:
     # copy (not move) so the original stays put until the user is happy
     shutil.copy2(db_src, folder / DB_NAME)
     for suffix in ("-wal", "-shm"):
         side = db_src.with_name(db_src.name + suffix)
         if side.exists():
             shutil.copy2(side, folder / (DB_NAME + suffix))
-    if key_src.is_file() and not (folder / KEY_NAME).exists():
-        shutil.copy2(key_src, folder / KEY_NAME)
+    for dest_name, src in extras.items():
+        if src.is_file() and not (folder / dest_name).exists():
+            shutil.copy2(src, folder / dest_name)

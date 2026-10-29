@@ -11,7 +11,7 @@ Block sites and apps, filter adult content with Cloudflare Family DNS, and put s
 ![Python](https://img.shields.io/badge/Python-3.12-14B8A6?style=for-the-badge&logo=python&logoColor=white)
 ![Android](https://img.shields.io/badge/Android-only-34D399?style=for-the-badge&logo=android&logoColor=white)
 ![Price](https://img.shields.io/badge/Price-free%20forever-06122B?style=for-the-badge)
-![Status](https://img.shields.io/badge/status-phase%203%20of%206-FBBF24?style=for-the-badge)
+![Status](https://img.shields.io/badge/status-phase%204%20of%206-FBBF24?style=for-the-badge)
 
 [Features](#-features) · [How it works](#-how-it-works) · [Roadmap](#-roadmap) · [Getting started](#-getting-started) · [Security model](#-security-model) · [FAQ](#-faq)
 
@@ -103,13 +103,27 @@ It only reads the foreground app's name, the browser's address bar and the label
 
 For the strongest setup, turn on **Always-on VPN** and **Block connections without VPN** for GuardPulse in Android's VPN settings. The app reminds you and opens the screen for you. If the VPN is ever revoked, GuardPulse shows a "Protection is OFF" notification and queues a tamper alert for your partner.
 
+### Uninstall + settings protection (phase 4)
+
+Turn on **Uninstall protection** (Device Admin) and Android blocks removing GuardPulse while it's active. On top of that, the overlay watches Android's own Settings and the package installer, and asks for the partner PIN before it lets anyone:
+
+- uninstall GuardPulse, or clear its data / force stop it;
+- deactivate its device-admin (the step Android needs before an uninstall);
+- disable it on the Accessibility or VPN screens.
+
+The PIN is checked **on the device, while the app is closed** — the native layer reads an HMAC-sealed PBKDF2 hash of the PIN, so a hand-edited file is rejected and the PIN is never stored in the clear. A correct PIN grants a short window to finish the change; a wrong one backs off the same way the in-app PIN does.
+
+> **What can't be stopped on the phone.** Safe mode, a factory reset, or `adb` can remove any user-installed app, GuardPulse included. Nothing running on the phone can prevent that — the honest answer is that the defence against it is the partner knowing. Phase 5 adds a daily "this phone has gone quiet" alert so a wipe or a long offline stretch is noticed.
+
+> Detection of Settings screens is text-based and varies by Android version and brand, so it errs toward asking for the PIN. If a screen slips through on your phone, tell me the device and Android version.
+
 ## 🗺️ Roadmap
 
 - [x] **Phase 1: Core app.** Flet 1.0.5 UI, SQLite with an HMAC seal, partner PIN (scrypt) and TOTP codes, the one-way ratchet, schedules, activity log, signed policy export
 - [x] **Phase 2: DNS filter.** Kotlin `VpnService` that intercepts DNS only: blacklisted names get NXDOMAIN and everything else goes to Cloudflare Family. Also: reloads instantly when rules change, restarts after reboot, raises a tamper alert when the VPN is revoked, warns when Private DNS bypasses the filter, and blocks browsers' own encrypted-DNS (DoH) endpoints
 - [x] **Phase 3: Security overlay.** `AccessibilityService` that covers blocked apps (always or on a schedule), blocked sites in 15+ browsers, and YouTube Shorts / Instagram Reels / Facebook Reels / Snapchat Spotlight. Also adds an installed-app picker and raises a tamper alert if the overlay is switched off outside the app
 - [x] **Updates:** daily GitHub release check, signature-verified in-place install, safety copies and automatic data recovery
-- [ ] **Phase 4: Uninstall + settings protection.** Device Admin, plus a partner-PIN cover over every Android Settings page that could switch GuardPulse off: Accessibility, VPN, Private DNS, App info (force stop, clear storage, uninstall), Device admin, Developer options, extra users and Secure Folder
+- [x] **Phase 4: Uninstall + settings protection.** Device Admin blocks uninstalling GuardPulse, and the overlay covers Android's Settings/installer screens that act on GuardPulse (uninstall, force stop, clear storage, deactivate device admin, disable) with a partner-PIN prompt. The native layer verifies the PIN offline (PBKDF2, from an HMAC-sealed file) so it works while the app is closed. Switching either off outside the app raises a tamper alert.
 - [ ] **Phase 5: Partner alerts.** The alert outbox posts to a self-hosted n8n webhook, which emails or WhatsApps the partner. A scheduled n8n check sends a "phone has gone quiet" alert after 24 hours without a check-in. Alerts are queued while the phone is offline.
 - [ ] **Phase 6: Google sign-in + sync.** Sign in with Google to keep rules, partner/PIN and activity in sync across devices. Uses Firebase's free Spark plan, end-to-end encrypted with a key that never leaves your devices. New devices pair by QR code, and showing that code needs the partner PIN.
 
@@ -190,7 +204,8 @@ extensions/flet_guardpulse_native/
 ├── src/flet_guardpulse_native/   # GuardNative Flet service (Python)
 └── src/flutter/flet_guardpulse_native/
     ├── lib/                      # Dart: forwards calls to the MethodChannel
-    └── android/…/shield/         # Kotlin: VPN + accessibility services, block overlay, detectors, policy
+    └── android/…/shield/         # Kotlin: VPN + accessibility services, overlay, detectors, policy,
+                                   #   device-admin, offline PIN verify, settings-guard, self-updater
 tests/test_guard.py               # engine + native-glue tests
 ```
 

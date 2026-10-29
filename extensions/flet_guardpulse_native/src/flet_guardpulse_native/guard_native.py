@@ -84,3 +84,14 @@ class GuardNative(ft.Service):
     async def update_install(self) -> str:
         """``"started"``, ``"needs_permission"`` (settings opened) or a refusal reason."""
         return str(await self._invoke_method("update_install", {}, timeout=120))
+
+    async def device_admin_active(self) -> bool:
+        return bool(await self._invoke_method("device_admin_active", {}))
+
+    async def request_device_admin(self) -> bool:
+        """Open Android's "activate device admin" screen for uninstall protection."""
+        return bool(await self._invoke_method("request_device_admin", {}))
+
+    async def remove_device_admin(self) -> bool:
+        """Deactivate device admin. The app must verify the partner PIN before calling."""
+        return bool(await self._invoke_method("remove_device_admin", {}))

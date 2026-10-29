@@ -144,6 +144,25 @@ class SafetyTests(unittest.TestCase):
         (old / "guardpulse.db").write_bytes(b"not a database")
         self.assertIsNone(safety.recover_if_missing(self.folder))
 
+    def test_snapshot_and_restore_carry_native_pin_file(self):
+        from guardpulse import security
+
+        g = self.populated()  # setup_partner writes pin.verify + .sig
+        self.assertTrue((self.folder / "pin.verify").exists())
+        g.snapshot("before-0.5.0")
+        g.conn.close()
+        for name in ("guardpulse.db", "guardpulse.db-wal", "guardpulse.db-shm",
+                     "pin.verify", "pin.verify.sig", "seal.key"):
+            (self.folder / name).unlink(missing_ok=True)
+        g2 = self.make_guard()
+        self.assertIn("snapshot", g2.recovered)
+        payload = (self.folder / "pin.verify").read_bytes()
+        sig = (self.folder / "pin.verify.sig").read_text()
+        # the restored PIN file is still valid under the restored seal key
+        self.assertTrue(security.seal_ok(g2.keys.get_key(), payload, sig))
+        self.assertTrue(security.verify_pbkdf2(PIN, payload.decode()))
+        g2.conn.close()
+
     def test_version_tracking(self):
         g = self.make_guard()
         self.assertIsNone(g.note_app_version("0.3.2"))  # first run records silently
