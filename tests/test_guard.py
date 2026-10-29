@@ -188,6 +188,13 @@ class DecisionTests(GuardTestCase):
         self.assertEqual(g.decide("a.private.docs.example.com"), "block")
         self.assertEqual(g.decide("unrelated.org"), "default")
 
+    def test_wildcard_input_covers_all_subdomains(self):
+        rule = self.guard.add_block("*.example.com")
+        self.assertEqual(rule.value, "example.com")
+        for host in ("example.com", "www.example.com", "a.b.c.example.com", "https://m.example.com/x"):
+            self.assertEqual(self.guard.decide(host), "block", host)
+        self.assertEqual(self.guard.decide("notexample.com"), "default")
+
     def test_equal_rules_allow_wins(self):
         self.guard.add_block("example.com")
         self.guard.add_allow("example.com")

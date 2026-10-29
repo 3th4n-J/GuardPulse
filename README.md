@@ -108,7 +108,8 @@ For the strongest setup, turn on **Always-on VPN** and **Block connections witho
 - [x] **Phase 1: Core app.** Flet 1.0.5 UI, SQLite with an HMAC seal, partner PIN (scrypt) and TOTP codes, the one-way ratchet, schedules, activity log, signed policy export
 - [x] **Phase 2: DNS filter.** Kotlin `VpnService` that intercepts DNS only: blacklisted names get NXDOMAIN and everything else goes to Cloudflare Family. Also: reloads instantly when rules change, restarts after reboot, raises a tamper alert when the VPN is revoked, warns when Private DNS bypasses the filter, and blocks browsers' own encrypted-DNS (DoH) endpoints
 - [x] **Phase 3: Security overlay.** `AccessibilityService` that covers blocked apps (always or on a schedule), blocked sites in 15+ browsers, and YouTube Shorts / Instagram Reels / Facebook Reels / Snapchat Spotlight. Also adds an installed-app picker and raises a tamper alert if the overlay is switched off outside the app
-- [ ] **Phase 4: Uninstall protection.** Device Admin plus a PIN screen over the app's Settings, force-stop and uninstall pages
+- [x] **Updates:** daily GitHub release check, signature-verified in-place install, safety copies and automatic data recovery
+- [ ] **Phase 4: Uninstall + settings protection.** Device Admin, plus a partner-PIN cover over every Android Settings page that could switch GuardPulse off: Accessibility, VPN, Private DNS, App info (force stop, clear storage, uninstall), Device admin, Developer options, extra users and Secure Folder
 - [ ] **Phase 5: Partner alerts.** The alert outbox posts to a self-hosted n8n webhook, which emails or WhatsApps the partner. A scheduled n8n check sends a "phone has gone quiet" alert after 24 hours without a check-in. Alerts are queued while the phone is offline.
 - [ ] **Phase 6: Google sign-in + sync.** Sign in with Google to keep rules, partner/PIN and activity in sync across devices. Uses Firebase's free Spark plan, end-to-end encrypted with a key that never leaves your devices. New devices pair by QR code, and showing that code needs the partner PIN.
 
@@ -151,6 +152,26 @@ Then, for every release:
 The script prompts for the keystore password, increases the Android version code, writes `build\apk\GuardPulse-<version>.apk` and prints the signer, so you can confirm it isn't `CN=Android Debug`.
 
 > **Back up the keystore and its password.** Every future update must be signed with the same key. Lose it and existing installs can never be updated. Never publish a debug-signed build: Android refuses to install it over a properly signed one.
+
+**Publish it** as a GitHub release (the in-app updater picks it up):
+
+```bash
+.\create-release.ps1
+```
+
+The script refuses any APK that isn't signed with the GuardPulse release key, makes sure the code is committed, adds a `.sha256` checksum, then tags `v<version>` and creates the release.
+
+### 🔄 Updates that never lose your data
+
+GuardPulse checks GitHub for a new release once a day (or from **Settings → About → Check for updates**) and shows an *Update available* card. **Update now** then:
+
+1. saves a private safety copy of all data (`<app data>/backups`, newest 3 kept);
+2. downloads the APK and checks it has the **same package, a newer version and the same signing key** as the app you have installed. Android only updates in place, keeping every byte of app data, when all three match, so anything else is refused instead of nudging you to uninstall;
+3. hands it to Android's installer, and you confirm.
+
+On first start after an update, GuardPulse logs *App updated*. If a new build ever finds no database where it expects one (the storage move that cost Selah Notes its data), it moves the old copy across or restores the newest safety copy, and never overwrites existing data. Safety copies stay in private storage because they contain the partner PIN hash and authenticator key.
+
+> **Even safer alternative:** [Obtainium](https://github.com/ImranR98/Obtainium) can track the GitHub releases and install updates with the same signature checks. The in-app updater does this for you, so it's optional.
 
 ### Project layout
 

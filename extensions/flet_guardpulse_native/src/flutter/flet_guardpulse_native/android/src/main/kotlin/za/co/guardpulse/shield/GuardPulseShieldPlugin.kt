@@ -99,8 +99,85 @@ class GuardPulseShieldPlugin :
                 result.success(true)
             }
             "list_apps" -> listApps(result)
+            "app_icons" -> {
+                val packages = call.argument<List<String>>("packages") ?: emptyList()
+                background(result) { packages.mapNotNull { p -> iconPng(p)?.let { p to it } }.toMap() }
+            }
+            "app_info" -> result.success(
+                mapOf(
+                    "version_name" to versionName(),
+                    "signer_sha256" to Updater.signerSha256(context),
+                    "can_install_updates" to Updater.canInstall(context),
+                )
+            )
+            "update_download" -> {
+                val url = call.argument<String>("url")
+                if (url.isNullOrBlank() || !url.startsWith("https://")) {
+                    result.error("bad_args", "an https url is required", null)
+                    return
+                }
+                background(result) { mapOf("bytes" to Updater.download(context, url)) }
+            }
+            "update_verify" -> background(result) { Updater.verify(context, Updater.apkFile(context)) }
+            "update_install" -> {
+                if (!Updater.canInstall(context)) {
+                    // one-time "Install unknown apps" switch for GuardPulse
+                    open(
+                        Intent(
+                            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            Uri.parse("package:${context.packageName}"),
+                        )
+                    )
+                    result.success("needs_permission")
+                    return
+                }
+                // re-check right before installing: the file could have changed since verify
+                val check = Updater.verify(context, Updater.apkFile(context))
+                if (check["ok"] != true) {
+                    result.success(check["reason"] ?: "verification failed")
+                    return
+                }
+                background(result) {
+                    Updater.install(context, Updater.apkFile(context))
+                    "started"
+                }
+            }
             else -> result.notImplemented()
         }
+    }
+
+    /** Run off the main thread; reply on it (MethodChannel results must be main-thread). */
+    private fun background(result: MethodChannel.Result, work: () -> Any?) {
+        val main = Handler(Looper.getMainLooper())
+        Thread {
+            try {
+                val value = work()
+                main.post { result.success(value) }
+            } catch (e: Exception) {
+                main.post { result.error("failed", e.message ?: e.toString(), null) }
+            }
+        }.start()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun versionName(): String? = context.packageManager.getPackageInfo(context.packageName, 0).versionName
+
+    /**
+     * The app's own launcher icon from this phone, as a small base64 PNG.
+     * Nothing is bundled with GuardPulse - icons only show for installed apps.
+     */
+    private fun iconPng(pkg: String, sizeDp: Int = 40): String? = try {
+        val drawable = context.packageManager.getApplicationIcon(pkg)
+        val px = (sizeDp * context.resources.displayMetrics.density).toInt().coerceAtLeast(48)
+        val bitmap = android.graphics.Bitmap.createBitmap(px, px, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        drawable.setBounds(0, 0, px, px)
+        drawable.draw(canvas)
+        val out = java.io.ByteArrayOutputStream()
+        bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+        android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
+    } catch (e: PackageManager.NameNotFoundException) {
+        null
     }
 
     private fun open(intent: Intent) {
@@ -126,6 +203,7 @@ class GuardPulseShieldPlugin :
                 .filter { it["package"] != context.packageName }
                 .distinctBy { it["package"] }
                 .sortedBy { it["label"]!!.lowercase() }
+                .map { it + ("icon" to iconPng(it["package"]!!, 32)) }
             main.post { result.success(apps) }
         }.start()
     }
