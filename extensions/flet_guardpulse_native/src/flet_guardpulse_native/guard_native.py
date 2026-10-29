@@ -43,3 +43,22 @@ class GuardNative(ft.Service):
     async def open_vpn_settings(self) -> bool:
         """Open Android's VPN screen so the user can turn on Always-on VPN."""
         return bool(await self._invoke_method("open_vpn_settings", {}))
+
+    async def configure(self, folder: str) -> bool:
+        """Tell the native services where policy.json lives (call once at start-up)."""
+        return bool(await self._invoke_method("configure", {"folder": folder}))
+
+    async def open_accessibility_settings(self) -> bool:
+        return bool(await self._invoke_method("open_accessibility_settings", {}))
+
+    async def open_app_info(self) -> bool:
+        """App info screen - where Android 13+ hides "Allow restricted settings"."""
+        return bool(await self._invoke_method("open_app_info", {}))
+
+    async def stop_overlay(self) -> bool:
+        return bool(await self._invoke_method("stop_overlay", {}))
+
+    async def list_apps(self) -> list[dict[str, str]]:
+        """Launchable apps as ``[{"package": ..., "label": ...}]``, sorted by label."""
+        result = await self._invoke_method("list_apps", {}, timeout=30)
+        return [dict(a) for a in (result or [])]

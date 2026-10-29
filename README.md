@@ -11,7 +11,7 @@ Block sites and apps, filter adult content with Cloudflare Family DNS, and put s
 ![Python](https://img.shields.io/badge/Python-3.12-14B8A6?style=for-the-badge&logo=python&logoColor=white)
 ![Android](https://img.shields.io/badge/Android-only-34D399?style=for-the-badge&logo=android&logoColor=white)
 ![Price](https://img.shields.io/badge/Price-free%20forever-06122B?style=for-the-badge)
-![Status](https://img.shields.io/badge/status-phase%202%20of%205-FBBF24?style=for-the-badge)
+![Status](https://img.shields.io/badge/status-phase%203%20of%206-FBBF24?style=for-the-badge)
 
 [Features](#-features) · [How it works](#-how-it-works) · [Roadmap](#-roadmap) · [Getting started](#-getting-started) · [Security model](#-security-model) · [FAQ](#-faq)
 
@@ -87,15 +87,30 @@ The VPN claims a single virtual DNS address (`10.111.222.2`), so **only DNS look
 | Browser DoH endpoints (`dns.google`, `use-application-dns.net`, …) | `NXDOMAIN`, so browsers can't tunnel around the filter |
 | Everything else | Forwarded to Cloudflare Family `1.1.1.3` / `1.0.0.3`, which filters adult content and malware |
 
+### The security overlay (phase 3)
+
+An Android Accessibility service watches which app is in front and covers it with a full-screen block screen when:
+
+| Trigger | What happens |
+|---|---|
+| A blocked app opens, or an app inside an active schedule | "App is blocked" cover; **Close** returns to the home screen |
+| A browser shows a blacklisted site | "Site blocked" cover; **Go back** leaves the page (works in Chrome, Firefox, Samsung Internet, Edge, Brave, Opera, DuckDuckGo, Vivaldi and more) |
+| You open YouTube Shorts, Instagram or Facebook Reels, or Snapchat Spotlight | Bounces you back with a brief "Shorts are blocked" message; the rest of the app keeps working |
+
+It only reads the foreground app's name, the browser's address bar and the labels of short-video screens. Nothing leaves the phone.
+
+> **Sideloading on Android 13+:** Android hides accessibility for apps installed outside the Play Store until you allow it. Open **App info → ⋮ → Allow restricted settings**, then switch GuardPulse on under **Accessibility**. The app walks you through this.
+
 For the strongest setup, turn on **Always-on VPN** and **Block connections without VPN** for GuardPulse in Android's VPN settings. The app reminds you and opens the screen for you. If the VPN is ever revoked, GuardPulse shows a "Protection is OFF" notification and queues a tamper alert for your partner.
 
 ## 🗺️ Roadmap
 
 - [x] **Phase 1: Core app.** Flet 1.0.5 UI, SQLite with an HMAC seal, partner PIN (scrypt) and TOTP codes, the one-way ratchet, schedules, activity log, signed policy export
 - [x] **Phase 2: DNS filter.** Kotlin `VpnService` that intercepts DNS only: blacklisted names get NXDOMAIN and everything else goes to Cloudflare Family. Also: reloads instantly when rules change, restarts after reboot, raises a tamper alert when the VPN is revoked, warns when Private DNS bypasses the filter, and blocks browsers' own encrypted-DNS (DoH) endpoints
-- [ ] **Phase 3: Security overlay.** `AccessibilityService` that reads browser URL bars, blocks apps and short-video feeds, applies schedule locks, and includes an installed-app picker
+- [x] **Phase 3: Security overlay.** `AccessibilityService` that covers blocked apps (always or on a schedule), blocked sites in 15+ browsers, and YouTube Shorts / Instagram Reels / Facebook Reels / Snapchat Spotlight. Also adds an installed-app picker and raises a tamper alert if the overlay is switched off outside the app
 - [ ] **Phase 4: Uninstall protection.** Device Admin plus a PIN screen over the app's Settings, force-stop and uninstall pages
-- [ ] **Phase 5: Partner alerts.** The alert outbox posts to an n8n webhook, which emails or WhatsApps the partner. Alerts are queued while the phone is offline.
+- [ ] **Phase 5: Partner alerts.** The alert outbox posts to a self-hosted n8n webhook, which emails or WhatsApps the partner. A scheduled n8n check sends a "phone has gone quiet" alert after 24 hours without a check-in. Alerts are queued while the phone is offline.
+- [ ] **Phase 6: Google sign-in + sync.** Sign in with Google to keep rules, partner/PIN and activity in sync across devices. Uses Firebase's free Spark plan, end-to-end encrypted with a key that never leaves your devices. New devices pair by QR code, and showing that code needs the partner PIN.
 
 ## 🚀 Getting started
 
@@ -146,7 +161,7 @@ extensions/flet_guardpulse_native/
 ├── src/flet_guardpulse_native/   # GuardNative Flet service (Python)
 └── src/flutter/flet_guardpulse_native/
     ├── lib/                      # Dart: forwards calls to the MethodChannel
-    └── android/…/shield/         # Kotlin: VPN service, DNS packets, policy, boot receiver
+    └── android/…/shield/         # Kotlin: VPN + accessibility services, block overlay, detectors, policy
 tests/test_guard.py               # engine + native-glue tests
 ```
 

@@ -59,6 +59,8 @@ ACTION_LABELS = {
     "onboarding.skipped": ("Partner setup skipped", ft.Icons.SKIP_NEXT),
     "filter.enabled": ("DNS filter on", ft.Icons.VPN_LOCK_OUTLINED),
     "filter.disabled": ("DNS filter off", ft.Icons.POWER_SETTINGS_NEW),
+    "overlay.setup_opened": ("Overlay setup opened", ft.Icons.LAYERS_OUTLINED),
+    "overlay.disabled": ("Security overlay off", ft.Icons.LAYERS_CLEAR_OUTLINED),
     "native.vpn_not_prepared": ("VPN permission missing", ft.Icons.GPP_MAYBE_OUTLINED),
 }
 
@@ -279,21 +281,35 @@ def home(app: App) -> list[ft.Control]:
                 action=ft.TextButton("Open", on_click=lambda _: app.open_vpn_settings()),
             )
         )
+    overlay_off = app.native.overlay_off_warning()
+    if overlay_off:
+        out.append(
+            _notice(
+                ft.Icons.LAYERS_CLEAR_OUTLINED,
+                "Security overlay is off",
+                overlay_off,
+                theme.DANGER,
+                action=ft.TextButton("Fix", on_click=lambda _: app.enable_overlay()),
+            )
+        )
+    switches = {
+        "vpn": (app.enable_filter, app.disable_filter),
+        "accessibility": (app.enable_overlay, app.disable_overlay),
+    }
     for comp in app.native.status():
+        turn_on, turn_off = switches.get(comp.key, (None, None))
         if comp.active:
             status = ft.Column(
-                [
-                    theme.pill("Active", theme.PULSE, ft.Icons.CHECK),
-                    ft.TextButton("Turn off", on_click=lambda _: app.disable_filter()),
-                ]
-                if comp.key == "vpn"
-                else [theme.pill("Active", theme.PULSE, ft.Icons.CHECK)],
+                [theme.pill("Active", theme.PULSE, ft.Icons.CHECK)]
+                + ([ft.TextButton("Turn off", on_click=lambda _, f=turn_off: f())] if turn_off else []),
                 horizontal_alignment=ft.CrossAxisAlignment.END,
                 spacing=0,
             )
-        elif comp.available:
-            status = ft.FilledButton("Turn on", icon=ft.Icons.POWER_SETTINGS_NEW, on_click=lambda _: app.enable_filter())
-        elif comp.key == "vpn":
+        elif comp.available and turn_on:
+            status = ft.FilledButton(
+                "Turn on", icon=ft.Icons.POWER_SETTINGS_NEW, on_click=lambda _, f=turn_on: f()
+            )
+        elif comp.key in switches:
             status = theme.pill("Android only", theme.MUTED, ft.Icons.PHONE_ANDROID)
         else:
             status = theme.pill(f"Phase {comp.phase}", theme.MUTED, ft.Icons.CONSTRUCTION)
@@ -499,9 +515,18 @@ def apps(app: App) -> list[ft.Control]:
             spacing=8,
             run_spacing=8,
         ),
+        ft.FilledButton(
+            "Choose from installed apps",
+            icon=ft.Icons.APPS,
+            height=44,
+            on_click=lambda _: _open_after_loading_apps(app, _installed_picker),
+            visible=app.native.available,
+        ),
         theme.card(ft.Row([package, ft.FilledButton("Block", icon=ft.Icons.ADD, on_click=add)]), padding=10),
         ft.Text(
-            "An installed-app picker arrives with the Android protection services.",
+            "Blocked apps are covered by the security overlay - make sure it's on (Home)."
+            if app.native.available
+            else "App blocking runs on Android with the security overlay.",
             size=12,
             color=theme.MUTED,
         ),
@@ -569,7 +594,10 @@ def schedule(app: App) -> list[ft.Control]:
             color=theme.MUTED,
         ),
         ft.FilledButton(
-            "New schedule", icon=ft.Icons.ADD_ALARM, on_click=lambda _: _schedule_dialog(app), height=44
+            "New schedule",
+            icon=ft.Icons.ADD_ALARM,
+            on_click=lambda _: _open_after_loading_apps(app, _schedule_dialog),
+            height=44,
         ),
     ]
     if not rows:
@@ -640,7 +668,7 @@ def _schedule_dialog(app: App) -> None:
     start_btn = ft.OutlinedButton(_hhmm(state["start"]), icon=ft.Icons.NIGHTLIGHT_OUTLINED)
     end_btn = ft.OutlinedButton(_hhmm(state["end"]), icon=ft.Icons.WB_SUNNY_OUTLINED)
     day_row = ft.Row(wrap=True, spacing=6, run_spacing=6)
-    custom = ft.TextField(hint_text="Other package name", dense=True, expand=True)
+    custom = ft.TextField(hint_text="Other package name", dense=True)
     error = ft.Text("", color=theme.DANGER, size=12, visible=False)
 
     def draw_days():
@@ -680,11 +708,12 @@ def _schedule_dialog(app: App) -> None:
     start_btn.on_click = lambda _: pick_time("start", start_btn)
     end_btn.on_click = lambda _: pick_time("end", end_btn)
 
-    choices = {pkg: label for label, pkg in POPULAR_APPS} | {a.package: a.label for a in g.blocked_apps()}
-    boxes = [
-        ft.Checkbox(label=label, value=False, on_change=lambda e, p=pkg: _toggle(state["apps"], p, e.control.value))
-        for pkg, label in sorted(choices.items(), key=lambda kv: kv[1].lower())
-    ]
+    choices = (
+        {pkg: label for label, pkg in POPULAR_APPS}
+        | {a["package"]: a["label"] for a in app.native.installed_apps}
+        | {a.package: a.label for a in g.blocked_apps()}
+    )
+    search, checklist = _app_checklist(choices, state["apps"])
 
     def save(_):
         apps_ = set(state["apps"])
@@ -718,7 +747,8 @@ def _schedule_dialog(app: App) -> None:
                         spacing=24,
                     ),
                     ft.Text("Apps to lock", size=12, color=theme.MUTED),
-                    *boxes,
+                    search,
+                    checklist,
                     custom,
                     error,
                 ],
@@ -736,6 +766,80 @@ def _schedule_dialog(app: App) -> None:
 
 def _toggle(bucket: set, item: str, on: bool) -> None:
     (bucket.add if on else bucket.discard)(item)
+
+
+def _app_checklist(choices: dict[str, str], selected: set[str]) -> tuple[ft.TextField, ft.Column]:
+    """Search box + checkbox list over ``{package: label}``; ticks land in ``selected``."""
+    rows = [
+        ft.Checkbox(
+            label=label,
+            value=pkg in selected,
+            data=f"{label} {pkg}".lower(),
+            on_change=lambda e, p=pkg: _toggle(selected, p, e.control.value),
+        )
+        for pkg, label in sorted(choices.items(), key=lambda kv: kv[1].lower())
+    ]
+    column = ft.Column(rows, spacing=0, height=min(56 * len(rows), 320), scroll=ft.ScrollMode.AUTO)
+
+    def filter_rows(e):
+        needle = (e.control.value or "").strip().lower()
+        for row in rows:
+            row.visible = needle in row.data
+        column.update()
+
+    search = ft.TextField(
+        hint_text=f"Search {len(rows)} apps",
+        prefix_icon=ft.Icons.SEARCH,
+        dense=True,
+        on_change=filter_rows,
+    )
+    return search, column
+
+
+def _open_after_loading_apps(app: App, opener) -> None:
+    """Fetch the installed-app list (Android) before showing a picker."""
+
+    async def run():
+        await app.native.load_installed_apps()
+        opener(app)
+
+    app.page.run_task(run)
+
+
+def _installed_picker(app: App) -> None:
+    g = app.guard
+    already = {a.package for a in g.blocked_apps()}
+    choices = {a["package"]: a["label"] for a in app.native.installed_apps if a["package"] not in already}
+    picked: set[str] = set()
+    search, checklist = _app_checklist(choices, picked)
+
+    def save(_):
+        for pkg in sorted(picked):
+            g.add_app(pkg, choices[pkg])
+        app.close_dialog()
+        if picked:
+            app.toast(f"{len(picked)} app{'s' if len(picked) != 1 else ''} blocked")
+        app.render()
+
+    app.open_dialog(
+        ft.AlertDialog(
+            title=ft.Text("Block installed apps"),
+            content=ft.Column(
+                [
+                    ft.Text("Blocking is free - unblocking needs your partner.", size=12, color=theme.MUTED),
+                    search,
+                    checklist,
+                ],
+                tight=True,
+                spacing=8,
+                width=360,
+            ),
+            actions=[
+                ft.TextButton("Cancel", on_click=lambda _: app.close_dialog()),
+                ft.FilledButton("Block selected", icon=ft.Icons.APP_BLOCKING_OUTLINED, on_click=save),
+            ],
+        )
+    )
 
 
 # --- Settings --------------------------------------------------------------

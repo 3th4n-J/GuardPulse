@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="guardpulse_accessibility_label">GuardPulse security overlay</string>
+    <string name="guardpulse_accessibility_description">GuardPulse uses accessibility to see which app is open and which website your browser is showing, so it can cover blocked apps, blocked sites and short-video feeds. Nothing you see or type leaves this phone.</string>
+</resources>

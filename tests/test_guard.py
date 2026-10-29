@@ -253,6 +253,36 @@ class NativeGlueTests(GuardTestCase):
         self.guard.authorise_filter_off()
         self.assertIn("protection_disabled", [r["event"] for r in self.guard.pending_alerts()])
 
+    def test_overlay_off_needs_partner(self):
+        self.setup_partner()
+        with self.assertRaises(Locked):
+            self.guard.authorise_overlay_off()
+        self.guard.unlock(PIN)
+        self.guard.authorise_overlay_off()
+        self.assertEqual(self.guard.history(1)[0]["action"], "overlay.disabled")
+
+    def test_overlay_disabled_outside_app_is_tamper(self):
+        self.guard.record_native("accessibility_disabled", "switched off in settings")
+        self.assertTrue(self.guard.tampered)
+
+    def test_overlay_off_warning(self):
+        from guardpulse.native import NativeBridge
+
+        bridge = NativeBridge(folder=self.folder)
+        bridge.state = {"overlay_wanted": True, "overlay_enabled": False}
+        self.assertIsNotNone(bridge.overlay_off_warning())
+        bridge.state = {"overlay_wanted": True, "overlay_enabled": True}
+        self.assertIsNone(bridge.overlay_off_warning())
+        self.assertTrue(bridge.overlay_running)
+
+    def test_policy_carries_apps_and_schedules_for_overlay(self):
+        self.guard.add_app("com.reddit.frontpage", "Reddit")
+        self.guard.add_schedule("Night", 0b1111111, 22 * 60, 6 * 60, ["org.telegram.messenger"])
+        policy = json.loads((self.folder / "policy.json").read_text())
+        self.assertEqual(policy["apps"], ["com.reddit.frontpage"])
+        self.assertEqual(policy["schedules"][0]["packages"], ["org.telegram.messenger"])
+        self.assertTrue(policy["settings"]["feed_youtube_shorts"])
+
     def test_native_tamper_events_raise_warning(self):
         self.guard.record_native("vpn_not_prepared", "permission missing")
         self.assertFalse(self.guard.tampered)

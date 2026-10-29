@@ -21,6 +21,13 @@ object Store {
     fun setEnabled(ctx: Context, on: Boolean) =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("enabled", on).apply()
 
+    /** True once the overlay has been switched on, until the partner turns it off in-app. */
+    fun overlayWanted(ctx: Context): Boolean =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("overlay_wanted", false)
+
+    fun setOverlayWanted(ctx: Context, on: Boolean) =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("overlay_wanted", on).apply()
+
     /**
      * Append an event for the Python side, which drains native_events.jsonl and
      * turns tamper events into partner alerts.

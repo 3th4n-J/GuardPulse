@@ -443,10 +443,17 @@ class Guard:
 
     def authorise_filter_off(self) -> None:
         """Gate + record switching the DNS filter off from inside the app."""
-        self._require("turn the DNS filter off")
+        self._authorise_off("filter.disabled", "dns_filter", "turn the DNS filter off")
+
+    def authorise_overlay_off(self) -> None:
+        """Gate + record switching the security overlay off from inside the app."""
+        self._authorise_off("overlay.disabled", "security_overlay", "turn the security overlay off")
+
+    def _authorise_off(self, action: str, setting: str, reason: str) -> None:
+        self._require(reason)
         with self._tx():
-            self._audit("filter.disabled", "", self._unlocked_by)
-            self._queue("protection_disabled", {"setting": "dns_filter"})
+            self._audit(action, "", self._unlocked_by)
+            self._queue("protection_disabled", {"setting": setting})
 
     def record_native(self, event: str, detail: str) -> None:
         """Log an event from the Android layer; tamper events also raise the warning."""
