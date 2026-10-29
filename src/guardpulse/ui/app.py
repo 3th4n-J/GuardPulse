@@ -25,7 +25,7 @@ class App:
     def __init__(self, page: ft.Page, guard: Guard | None = None):
         self.page = page
         self.guard = guard or Guard()
-        self.native = NativeBridge()
+        self.native = NativeBridge(page, self.guard.folder)
         self.tab = 0
         self.body = ft.Container(expand=True)
         self.lock_chip = ft.Container()
@@ -91,7 +91,37 @@ class App:
             return
         if success:
             self.toast(success)
+        if self.native.filter_running:
+            self.page.run_task(self.native.reload_policy)
         self.render()
+
+    # --- DNS filter (Android) ------------------------------------------------
+
+    def enable_filter(self) -> None:
+        async def run():
+            if await self.native.enable_filter():
+                self.guard.note("filter.enabled")
+                self.toast("DNS filter is on")
+            else:
+                self.toast("Android's VPN permission is needed to filter sites.", error=True)
+            self.render()
+
+        self.page.run_task(run)
+
+    def disable_filter(self) -> None:
+        def gate():
+            self.guard.authorise_filter_off()
+            self.page.run_task(self._stop_filter)
+
+        self.act(gate)
+
+    async def _stop_filter(self) -> None:
+        await self.native.disable_filter()
+        self.toast("DNS filter is off")
+        self.render()
+
+    def open_vpn_settings(self) -> None:
+        self.page.run_task(self.native.open_vpn_settings)
 
     def ask_pin(self, reason: str, then: Callable[[], None] | None = None) -> None:
         field = ft.TextField(
@@ -234,8 +264,13 @@ class App:
 
     async def _tick(self) -> None:
         was_unlocked = self.guard.is_setup and self.guard.unlocked
+        seconds = 0
+        await self._poll_native(initial=True)
         while True:
             await asyncio.sleep(1)
+            seconds += 1
+            if seconds % 5 == 0:
+                await self._poll_native()
             if not self.guard.is_setup:
                 continue
             unlocked = self.guard.unlocked
@@ -248,6 +283,24 @@ class App:
             except RuntimeError:
                 pass  # chip not on screen yet (onboarding)
             was_unlocked = unlocked
+
+    async def _poll_native(self, initial: bool = False) -> None:
+        """Pick up tamper events and status changes from the Kotlin side."""
+        if not self.native.available:
+            return
+        events = self.native.drain_events()
+        for event in events:
+            self.guard.record_native(event.get("event", "unknown"), event.get("detail", ""))
+        keys = ("vpn_running", "vpn_prepared", "always_on", "private_dns_mode", "private_dns_host")
+        before = {k: self.native.state.get(k) for k in keys}
+        await self.native.refresh()
+        # counters change constantly; only re-render (which resets scroll) on real state changes
+        changed = bool(events) or {k: self.native.state.get(k) for k in keys} != before
+        if (initial or changed) and self.page.navigation_bar is not None and self.tab in (0, 4):
+            try:
+                self.render()
+            except RuntimeError:
+                pass
 
 
 def main(page: ft.Page) -> None:

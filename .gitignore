@@ -13,3 +13,4 @@ dist/
 *.keystore
 storage/
 .env
+*.egg-info/

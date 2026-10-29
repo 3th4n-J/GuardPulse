@@ -1,0 +1,20 @@
+[project]
+name = "flet-guardpulse-native"
+version = "0.2.0"
+description = "GuardPulse Android enforcement layer: DNS-filter VPN (Kotlin) exposed as a Flet 1.0 service."
+authors = [{ name = "Ethan Johnston" }]
+requires-python = ">=3.10"
+dependencies = [
+    "flet==1.0.5",
+]
+
+[tool.setuptools.package-data]
+"flutter.flet_guardpulse_native" = [
+    "pubspec.yaml",
+    "lib/**",
+    "android/**",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"

@@ -441,6 +441,22 @@ class Guard:
             self._audit("tamper.acknowledged", "", self._unlocked_by)
         self.tampered = False
 
+    def authorise_filter_off(self) -> None:
+        """Gate + record switching the DNS filter off from inside the app."""
+        self._require("turn the DNS filter off")
+        with self._tx():
+            self._audit("filter.disabled", "", self._unlocked_by)
+            self._queue("protection_disabled", {"setting": "dns_filter"})
+
+    def record_native(self, event: str, detail: str) -> None:
+        """Log an event from the Android layer; tamper events also raise the warning."""
+        from .native import TAMPER_EVENTS
+
+        if event in TAMPER_EVENTS:
+            self.report_tamper(detail or event)
+        else:
+            self._audit(f"native.{event}", detail)
+
     def report_tamper(self, what: str) -> None:
         """Called by the native layer when a protection is switched off outside the app."""
         with self._tx():

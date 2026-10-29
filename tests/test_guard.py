@@ -244,5 +244,44 @@ class TamperTests(GuardTestCase):
         self.assertEqual(json.loads(payload)["block"], ["bad.com"])
 
 
+class NativeGlueTests(GuardTestCase):
+    def test_filter_off_needs_partner_and_alerts(self):
+        self.setup_partner()
+        with self.assertRaises(Locked):
+            self.guard.authorise_filter_off()
+        self.guard.unlock(PIN)
+        self.guard.authorise_filter_off()
+        self.assertIn("protection_disabled", [r["event"] for r in self.guard.pending_alerts()])
+
+    def test_native_tamper_events_raise_warning(self):
+        self.guard.record_native("vpn_not_prepared", "permission missing")
+        self.assertFalse(self.guard.tampered)
+        self.guard.record_native("vpn_revoked", "switched off in settings")
+        self.assertTrue(self.guard.tampered)
+
+    def test_drain_events_reads_once(self):
+        from guardpulse.native import NativeBridge
+
+        bridge = NativeBridge(folder=self.folder)
+        path = self.folder / "native_events.jsonl"
+        path.write_text(
+            '{"at": 1, "event": "vpn_revoked", "detail": "x"}\nnot json\n', encoding="utf-8"
+        )
+        self.assertEqual([e["event"] for e in bridge.drain_events()], ["vpn_revoked"])
+        self.assertEqual(bridge.drain_events(), [])
+        self.assertFalse(bridge.available)
+
+    def test_private_dns_warning(self):
+        from guardpulse.native import NativeBridge
+
+        bridge = NativeBridge(folder=self.folder)
+        bridge.state = {"private_dns_mode": "hostname", "private_dns_host": "dns.google"}
+        self.assertIn("dns.google", bridge.private_dns_warning())
+        bridge.state = {"private_dns_mode": "hostname", "private_dns_host": "family.cloudflare-dns.com"}
+        self.assertIsNone(bridge.private_dns_warning())
+        bridge.state = {"private_dns_mode": "opportunistic"}
+        self.assertIsNone(bridge.private_dns_warning())
+
+
 if __name__ == "__main__":
     unittest.main()

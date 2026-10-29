@@ -57,6 +57,9 @@ ACTION_LABELS = {
     "tamper.detected": ("Tampering detected", ft.Icons.WARNING_AMBER),
     "tamper.acknowledged": ("Tamper warning cleared", ft.Icons.VERIFIED_USER_OUTLINED),
     "onboarding.skipped": ("Partner setup skipped", ft.Icons.SKIP_NEXT),
+    "filter.enabled": ("DNS filter on", ft.Icons.VPN_LOCK_OUTLINED),
+    "filter.disabled": ("DNS filter off", ft.Icons.POWER_SETTINGS_NEW),
+    "native.vpn_not_prepared": ("VPN permission missing", ft.Icons.GPP_MAYBE_OUTLINED),
 }
 
 
@@ -170,17 +173,30 @@ def home(app: App) -> list[ft.Control]:
 
     # hero
     active = g.setting("family_dns")
+    protected = app.native.filter_running
+    blocked = app.native.state.get("blocked", 0)
     out.append(
         ft.Container(
             ft.Row(
                 [
                     ft.Column(
                         [
-                            theme.pill("Rules ready", theme.PULSE, ft.Icons.FAVORITE),
-                            ft.Text("Your shield", size=24, weight=ft.FontWeight.W_800, color=theme.TEXT),
+                            theme.pill("Protected", theme.PULSE, ft.Icons.FAVORITE)
+                            if protected
+                            else theme.pill("Filter off", theme.AMBER, ft.Icons.POWER_SETTINGS_NEW),
                             ft.Text(
-                                "Blocking switches on once the Android protection services are "
-                                "installed (coming next). Your rules are saved and sealed.",
+                                "Your shield is up" if protected else "Your shield",
+                                size=24,
+                                weight=ft.FontWeight.W_800,
+                                color=theme.TEXT,
+                            ),
+                            ft.Text(
+                                f"Every app's lookups are filtered. {blocked} blocked so far."
+                                if protected
+                                else "Your rules are saved and sealed. Turn on the DNS filter below to "
+                                "start blocking."
+                                if app.native.available
+                                else "Blocking runs on Android. Your rules are saved and sealed.",
                                 size=12,
                                 color=theme.MUTED,
                             ),
@@ -249,12 +265,38 @@ def home(app: App) -> list[ft.Control]:
             padding=14,
         )
     )
-    for comp in app.native.status():
-        status = (
-            theme.pill("Active", theme.PULSE, ft.Icons.CHECK)
-            if comp.active
-            else theme.pill(f"Phase {comp.phase}", theme.MUTED, ft.Icons.CONSTRUCTION)
+    warning = app.native.private_dns_warning()
+    if warning:
+        out.append(_notice(ft.Icons.GPP_BAD_OUTLINED, "Private DNS is bypassing the filter", warning, theme.DANGER))
+    if app.native.needs_always_on:
+        out.append(
+            _notice(
+                ft.Icons.AUTORENEW,
+                "Turn on Always-on VPN",
+                "In Android's VPN settings, tap the gear next to GuardPulse and switch on "
+                "'Always-on VPN' and 'Block connections without VPN'.",
+                theme.AMBER,
+                action=ft.TextButton("Open", on_click=lambda _: app.open_vpn_settings()),
+            )
         )
+    for comp in app.native.status():
+        if comp.active:
+            status = ft.Column(
+                [
+                    theme.pill("Active", theme.PULSE, ft.Icons.CHECK),
+                    ft.TextButton("Turn off", on_click=lambda _: app.disable_filter()),
+                ]
+                if comp.key == "vpn"
+                else [theme.pill("Active", theme.PULSE, ft.Icons.CHECK)],
+                horizontal_alignment=ft.CrossAxisAlignment.END,
+                spacing=0,
+            )
+        elif comp.available:
+            status = ft.FilledButton("Turn on", icon=ft.Icons.POWER_SETTINGS_NEW, on_click=lambda _: app.enable_filter())
+        elif comp.key == "vpn":
+            status = theme.pill("Android only", theme.MUTED, ft.Icons.PHONE_ANDROID)
+        else:
+            status = theme.pill(f"Phase {comp.phase}", theme.MUTED, ft.Icons.CONSTRUCTION)
         out.append(
             theme.card(
                 ft.Row(
@@ -290,6 +332,26 @@ def home(app: App) -> list[ft.Control]:
         else theme.empty_state(ft.Icons.HISTORY, "Nothing yet", "Changes you make show up here.")
     )
     return out
+
+
+def _notice(icon: ft.IconData, title: str, text: str, color: str, action: ft.Control | None = None) -> ft.Control:
+    return theme.card(
+        ft.Row(
+            [
+                ft.Icon(icon, color=color, size=28),
+                ft.Column(
+                    [
+                        ft.Text(title, weight=ft.FontWeight.W_700, color=theme.TEXT),
+                        ft.Text(text, size=12, color=theme.MUTED),
+                    ],
+                    spacing=2,
+                    expand=True,
+                ),
+                *([action] if action else []),
+            ]
+        ),
+        border_color=color,
+    )
 
 
 def _start_partner_setup(app: App) -> None:
@@ -841,19 +903,45 @@ def settings(app: App) -> list[ft.Control]:
         if rows
         else theme.empty_state(ft.Icons.HISTORY, "Nothing yet", "Every change is recorded here.")
     )
-    out.append(
-        ft.Container(
-            ft.Text(
-                f"GuardPulse {__version__}  ·  free forever  ·  rules sealed with HMAC-SHA256",
-                size=11,
-                color=theme.MUTED,
-                text_align=ft.TextAlign.CENTER,
-            ),
-            alignment=ft.Alignment.CENTER,
-            padding=16,
-        )
-    )
+    out += [theme.section_title("About", ft.Icons.INFO_OUTLINE), _about_card()]
     return out
+
+
+def _about_card() -> ft.Control:
+    def fact(icon: ft.IconData, text: str) -> ft.Control:
+        return ft.Row(
+            [ft.Icon(icon, size=16, color=theme.CYAN), ft.Text(text, size=12, color=theme.MUTED, expand=True)],
+            spacing=8,
+        )
+
+    return theme.card(
+        ft.Column(
+            [
+                ft.Image(src="icon.png", width=112, height=112),
+                ft.Text("GuardPulse", size=22, weight=ft.FontWeight.W_800, color=theme.TEXT),
+                theme.pill(f"Version {__version__}", theme.CYAN, ft.Icons.NEW_RELEASES_OUTLINED),
+                ft.Text(
+                    "A completely free content blocker with accountability controls.",
+                    size=13,
+                    color=theme.MUTED,
+                    text_align=ft.TextAlign.CENTER,
+                ),
+                ft.Divider(color=theme.OUTLINE),
+                fact(ft.Icons.VOLUNTEER_ACTIVISM_OUTLINED, "Free forever - no ads, no subscriptions, no accounts"),
+                fact(ft.Icons.DNS_OUTLINED, f"Filtering by Cloudflare 1.1.1.1 for Families ({' / '.join(FAMILY_DNS_V4)})"),
+                fact(ft.Icons.LOCK_OUTLINE, "Rules sealed with HMAC-SHA256, PIN stored as a scrypt hash"),
+                fact(ft.Icons.PHONE_ANDROID, "Everything stays on this phone"),
+                ft.TextButton(
+                    "Source on GitHub",
+                    icon=ft.Icons.CODE,
+                    url="https://github.com/3th4n-J/GuardPulse",
+                ),
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=8,
+        ),
+        padding=20,
+    )
 
 
 def _require_unlocked(app: App, action: str) -> None:
