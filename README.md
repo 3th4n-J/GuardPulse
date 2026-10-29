@@ -94,7 +94,7 @@ An Android Accessibility service watches which app is in front and covers it wit
 | Trigger | What happens |
 |---|---|
 | A blocked app opens, or an app inside an active schedule | "App is blocked" cover; **Close** returns to the home screen |
-| A browser shows a blacklisted site | "Site blocked" cover; **Go back** leaves the page (works in Chrome, Firefox, Samsung Internet, Edge, Brave, Opera, DuckDuckGo, Vivaldi and more) |
+| A browser shows a blacklisted site | "Site blocked" cover, then the tab is sent to `about:blank` and you're taken to the home screen, so reopening the browser doesn't loop back to the site. Works in Chrome, Firefox, Samsung Internet, Edge, Brave, Opera, DuckDuckGo, Vivaldi and more |
 | You open YouTube Shorts, Instagram or Facebook Reels, or Snapchat Spotlight | Bounces you back with a brief "Shorts are blocked" message; the rest of the app keeps working |
 
 It only reads the foreground app's name, the browser's address bar and the labels of short-video screens. Nothing leaves the phone.

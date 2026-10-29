@@ -3,7 +3,11 @@ package za.co.guardpulse.shield
 import android.accessibilityservice.AccessibilityService
 import android.content.ComponentName
 import android.content.Context
+import android.os.Build
+import android.os.Bundle
 import android.os.FileObserver
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
@@ -27,7 +31,9 @@ class GuardAccessibilityService : AccessibilityService() {
         val blockedFeeds = AtomicLong()
 
         private const val FEED_DEBOUNCE_MS = 1200L
+        private const val ESCAPE_WINDOW_MS = 2500L
         private const val MAX_NODES = 600
+        private const val BLANK_PAGE = "about:blank"
 
         fun isEnabled(ctx: Context): Boolean {
             val enabled = Settings.Secure.getString(
@@ -46,6 +52,8 @@ class GuardAccessibilityService : AccessibilityService() {
     private lateinit var overlay: BlockOverlay
     private var stoppingByApp = false
     private var lastFeedBounce = 0L
+    private var escapingUntil = 0L
+    private val main = Handler(Looper.getMainLooper())
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -106,28 +114,54 @@ class GuardAccessibilityService : AccessibilityService() {
     }
 
     private fun checkBrowser(pkg: String, ids: List<String>) {
+        if (SystemClock.elapsedRealtime() < escapingUntil) return // our own redirect in progress
         val root = rootInActiveWindow ?: return
         for (id in ids) {
             val bar = root.findAccessibilityNodeInfosByViewId("$pkg:id/$id").firstOrNull() ?: continue
             if (bar.isFocused) return // the user is typing, not viewing a page
             val host = Detectors.hostFromAddressBar(bar.text) ?: return
-            if (policy.decide(host) == Decision.BLOCK) {
-                if (overlay.key == "site:$host") return
-                blockedSites.incrementAndGet()
-                overlay.show(
-                    "site:$host",
-                    "Site blocked",
-                    "$host is on your blocklist.",
-                    "Go back",
-                ) {
-                    performGlobalAction(GLOBAL_ACTION_BACK)
-                    overlay.hide()
-                }
-            } else if (overlay.key?.startsWith("site:") == true) {
-                overlay.hide()
-            }
+            if (policy.decide(host) == Decision.BLOCK) escapeSite(pkg, host, bar)
             return
         }
+    }
+
+    /**
+     * Leave a blocked site for good. Android won't let us close another app's
+     * tab, so we do the next best thing: cover the page, type about:blank into
+     * the address bar and press Enter (the tab no longer holds the site, so
+     * reopening the browser doesn't loop), then go to the home screen.
+     */
+    private fun escapeSite(pkg: String, host: String, bar: AccessibilityNodeInfo) {
+        blockedSites.incrementAndGet()
+        escapingUntil = SystemClock.elapsedRealtime() + ESCAPE_WINDOW_MS
+        overlay.show(
+            "site:$host",
+            "Site blocked",
+            "$host is on your blocklist. Closing it…",
+            button = null,
+            focusable = false, // the browser's address bar must keep input focus
+        ) {}
+
+        bar.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        bar.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        main.postDelayed({
+            // Firefox/Samsung swap the bar for an edit field once tapped - use whatever has input focus
+            val edit = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable } ?: bar
+            val args = Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, BLANK_PAGE)
+            }
+            val typed = edit.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+            main.postDelayed({
+                val entered = typed && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                    edit.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+                if (!entered) performGlobalAction(GLOBAL_ACTION_BACK) // older Android: at least leave the page
+                main.postDelayed({
+                    performGlobalAction(GLOBAL_ACTION_HOME)
+                    overlay.hide()
+                    overlay.flash("Blocked: $host - tab closed")
+                }, 600)
+            }, 200)
+        }, 300)
     }
 
     private fun checkFeed(feed: Detectors.Feed) {
