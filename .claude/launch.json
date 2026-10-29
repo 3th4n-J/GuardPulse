@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "guardpulse-web",
+      "runtimeExecutable": "pwsh",
+      "runtimeArgs": [
+        "-NoProfile",
+        "-Command",
+        "$env:FLET_APP_STORAGE_DATA = Join-Path $env:TEMP 'guardpulse-preview'; $env:FLET_FORCE_WEB_SERVER = 'true'; $env:FLET_SERVER_PORT = '8551'; Set-Location src; ..\\.venv\\Scripts\\python.exe main.py"
+      ],
+      "port": 8551
+    }
+  ]
+}

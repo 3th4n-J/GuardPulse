@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+.pytest_cache/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.key
+*.jks
+*.keystore
+storage/
+.env
