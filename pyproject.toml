@@ -1,0 +1,31 @@
+[project]
+name = "guardpulse"
+version = "0.1.0"
+description = "A completely free content blocker with accountability controls"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "Ethan Johnston" }]
+dependencies = [
+  "flet==1.0.5",
+  "segno==1.6.6",
+]
+
+[dependency-groups]
+dev = [
+  "flet[all]==1.0.5",
+]
+
+[tool.flet]
+org = "za.co.guardpulse"
+product = "GuardPulse"
+company = "GuardPulse"
+copyright = "Copyright (C) 2026 Ethan Johnston"
+
+[tool.flet.app]
+path = "src"
+
+[tool.flet.android]
+target_arch = ["arm64-v8a", "armeabi-v7a"]
+
+[tool.flet.android.permission]
+"android.permission.INTERNET" = true
