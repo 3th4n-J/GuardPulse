@@ -11,7 +11,7 @@ Block sites and apps, filter adult content with Cloudflare Family DNS, and put s
 ![Python](https://img.shields.io/badge/Python-3.12-14B8A6?style=for-the-badge&logo=python&logoColor=white)
 ![Android](https://img.shields.io/badge/Android-only-34D399?style=for-the-badge&logo=android&logoColor=white)
 ![Price](https://img.shields.io/badge/Price-free%20forever-06122B?style=for-the-badge)
-![Status](https://img.shields.io/badge/status-phase%201%20of%205-FBBF24?style=for-the-badge)
+![Status](https://img.shields.io/badge/status-phase%202%20of%205-FBBF24?style=for-the-badge)
 
 [Features](#-features) · [How it works](#-how-it-works) · [Roadmap](#-roadmap) · [Getting started](#-getting-started) · [Security model](#-security-model) · [FAQ](#-faq)
 
@@ -76,10 +76,23 @@ flowchart LR
 
 Flet handles the UI, data and rules. Android only exposes VPN, Accessibility and Device Admin to native code, so the enforcement services live in a Kotlin extension that reads the signed `policy.json` the Python side writes after every change.
 
+### The DNS filter (phase 2)
+
+The VPN claims a single virtual DNS address (`10.111.222.2`), so **only DNS lookups** go through it. Browsing, streaming and downloads keep using the normal network, so there's no speed cost and no battery-hungry packet routing.
+
+| Lookup | Answer |
+|---|---|
+| Matches your blacklist | `NXDOMAIN`: the site doesn't exist |
+| Matches your whitelist | Forwarded to Cloudflare |
+| Browser DoH endpoints (`dns.google`, `use-application-dns.net`, …) | `NXDOMAIN`, so browsers can't tunnel around the filter |
+| Everything else | Forwarded to Cloudflare Family `1.1.1.3` / `1.0.0.3`, which filters adult content and malware |
+
+For the strongest setup, turn on **Always-on VPN** and **Block connections without VPN** for GuardPulse in Android's VPN settings. The app reminds you and opens the screen for you. If the VPN is ever revoked, GuardPulse shows a "Protection is OFF" notification and queues a tamper alert for your partner.
+
 ## 🗺️ Roadmap
 
-- [x] **Phase 1: Core app.** Flet 1.0.5 UI, SQLite with an HMAC seal, partner PIN (scrypt) and TOTP codes, the one-way ratchet, schedules, activity log, signed policy export, 25 unit tests
-- [ ] **Phase 2: DNS filter.** Kotlin `VpnService` that intercepts DNS only: blacklisted names get no answer, everything else goes to Cloudflare Family
+- [x] **Phase 1: Core app.** Flet 1.0.5 UI, SQLite with an HMAC seal, partner PIN (scrypt) and TOTP codes, the one-way ratchet, schedules, activity log, signed policy export
+- [x] **Phase 2: DNS filter.** Kotlin `VpnService` that intercepts DNS only: blacklisted names get NXDOMAIN and everything else goes to Cloudflare Family. Also: reloads instantly when rules change, restarts after reboot, raises a tamper alert when the VPN is revoked, warns when Private DNS bypasses the filter, and blocks browsers' own encrypted-DNS (DoH) endpoints
 - [ ] **Phase 3: Security overlay.** `AccessibilityService` that reads browser URL bars, blocks apps and short-video feeds, applies schedule locks, and includes an installed-app picker
 - [ ] **Phase 4: Uninstall protection.** Device Admin plus a PIN screen over the app's Settings, force-stop and uninstall pages
 - [ ] **Phase 5: Partner alerts.** The alert outbox posts to an n8n webhook, which emails or WhatsApps the partner. Alerts are queued while the phone is offline.
@@ -93,7 +106,7 @@ uv venv .venv --python 3.12
 ```
 
 ```bash
-uv pip install --python .venv/Scripts/python.exe "flet[all]==1.0.5" "segno==1.6.6"
+uv pip install --python .venv/Scripts/python.exe "flet[all]==1.0.5" "segno==1.6.6" -e extensions/flet_guardpulse_native
 ```
 
 **Run on desktop** (hot reload):
@@ -127,9 +140,14 @@ src/
     ├── security.py          # scrypt PIN, RFC 6238 TOTP, HMAC seal
     ├── domains.py           # URL → domain normalising + matching
     ├── db.py                # SQLite schema + app-private storage
-    ├── native.py            # bridge to the Kotlin services (stub until phase 2)
+    ├── native.py            # bridge to the Kotlin services + tamper-event intake
     └── ui/                  # Flet screens, onboarding, theme
-tests/test_guard.py          # engine tests
+extensions/flet_guardpulse_native/
+├── src/flet_guardpulse_native/   # GuardNative Flet service (Python)
+└── src/flutter/flet_guardpulse_native/
+    ├── lib/                      # Dart: forwards calls to the MethodChannel
+    └── android/…/shield/         # Kotlin: VPN service, DNS packets, policy, boot receiver
+tests/test_guard.py               # engine + native-glue tests
 ```
 
 ## 🔐 Security model
@@ -140,10 +158,10 @@ tests/test_guard.py          # engine tests
 | **Brute force** | Three free attempts, then a back-off from 30 s up to 1 h. The counter is stored, so restarting the app doesn't reset it. |
 | **Remote codes** | Standard RFC 6238 TOTP (6 digits, 30 s, ±1 step for clock drift). Each code works once. |
 | **DB tampering** | Rules, apps, schedules, settings and partner credentials are sealed with HMAC-SHA256. A mismatch flags the app, queues an alert, and only the partner can clear the warning. |
-| **Policy hand-off** | The `policy.json` file the native services read is signed with the same key. |
+| **Policy hand-off** | The `policy.json` file the native services read is signed with the same key. The Kotlin filter verifies the signature before using any rule, keeps the last good policy if the check fails, and reports the tampering. |
 | **Data location** | App-private storage (`FLET_APP_STORAGE_DATA`), which other apps can't read without root. |
 
-> **Why not an "encrypted SQLite"?** SQLCipher isn't available for Python on Android. The real risk is that someone *changes* the rules, not that they *read* them, so GuardPulse signs the data instead of encrypting it. The signing key moves into the Android Keystore in phase 2.
+> **Why not an "encrypted SQLite"?** SQLCipher isn't available for Python on Android. The real risk is that someone *changes* the rules, not that they *read* them, so GuardPulse signs the data instead of encrypting it. Moving the signing key into the Android Keystore is planned.
 
 ## ❓ FAQ
 

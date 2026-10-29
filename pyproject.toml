@@ -1,6 +1,6 @@
 [project]
 name = "guardpulse"
-version = "0.1.0"
+version = "0.2.0"
 description = "A completely free content blocker with accountability controls"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -8,7 +8,12 @@ authors = [{ name = "Ethan Johnston" }]
 dependencies = [
   "flet==1.0.5",
   "segno==1.6.6",
+  # Android enforcement layer (Kotlin), vendored in extensions/
+  "flet-guardpulse-native",
 ]
+
+[tool.uv.sources]
+flet-guardpulse-native = { path = "extensions/flet_guardpulse_native", editable = true }
 
 [dependency-groups]
 dev = [
@@ -23,6 +28,10 @@ copyright = "Copyright (C) 2026 Ethan Johnston"
 
 [tool.flet.app]
 path = "src"
+
+# `flet build` installs the vendored extension from here (relative to this file)
+[tool.flet.dev_packages]
+flet-guardpulse-native = "extensions/flet_guardpulse_native"
 
 [tool.flet.android]
 target_arch = ["arm64-v8a", "armeabi-v7a"]

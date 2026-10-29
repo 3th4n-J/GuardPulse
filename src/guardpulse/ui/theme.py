@@ -15,6 +15,9 @@ AMBER = "#FBBF24"
 DANGER = "#F87171"
 TEXT = "#E6F1FF"
 MUTED = "#8FA3C7"
+# the logo's gradient (assets/icon.png)
+BRAND_BLUE = "#1D50C5"
+BRAND_TEAL = "#23C6C0"
 
 
 def apply(page: ft.Page) -> None:
@@ -38,8 +41,8 @@ def brand_mark(size: int = 40, glow: bool = False) -> ft.Container:
     return ft.Container(
         ft.Stack(
             [
-                ft.Icon(ft.Icons.SHIELD_ROUNDED, size=size * 0.72, color=NAVY),
-                ft.Icon(ft.Icons.MONITOR_HEART_ROUNDED, size=size * 0.34, color=PULSE),
+                ft.Icon(ft.Icons.SHIELD_OUTLINED, size=size * 0.74, color=ft.Colors.WHITE),
+                ft.Icon(ft.Icons.SHOW_CHART_ROUNDED, size=size * 0.34, color=ft.Colors.WHITE),
             ],
             alignment=ft.Alignment.CENTER,
         ),
@@ -50,9 +53,9 @@ def brand_mark(size: int = 40, glow: bool = False) -> ft.Container:
         gradient=ft.LinearGradient(
             begin=ft.Alignment.TOP_LEFT,
             end=ft.Alignment.BOTTOM_RIGHT,
-            colors=[CYAN, TEAL],
+            colors=[BRAND_BLUE, BRAND_TEAL],
         ),
-        shadow=ft.BoxShadow(blur_radius=size * 0.6, color=ft.Colors.with_opacity(0.45, CYAN))
+        shadow=ft.BoxShadow(blur_radius=size * 0.6, color=ft.Colors.with_opacity(0.45, BRAND_TEAL))
         if glow
         else None,
     )
