@@ -59,6 +59,28 @@ class GuardNative(ft.Service):
         return bool(await self._invoke_method("stop_overlay", {}))
 
     async def list_apps(self) -> list[dict[str, str]]:
-        """Launchable apps as ``[{"package": ..., "label": ...}]``, sorted by label."""
-        result = await self._invoke_method("list_apps", {}, timeout=30)
+        """Launchable apps as ``[{"package", "label", "icon"}]`` (icon = base64 PNG), sorted by label."""
+        result = await self._invoke_method("list_apps", {}, timeout=60)
         return [dict(a) for a in (result or [])]
+
+    async def app_icons(self, packages: list[str]) -> dict[str, str]:
+        """``{package: base64 PNG}`` for the ones installed on this phone."""
+        result = await self._invoke_method("app_icons", {"packages": list(packages)}, timeout=30)
+        return dict(result or {})
+
+    async def app_info(self) -> dict[str, Any]:
+        """Installed ``version_name``, ``signer_sha256`` list, ``can_install_updates``."""
+        return dict(await self._invoke_method("app_info", {}) or {})
+
+    async def update_download(self, url: str) -> int:
+        """Download a release APK into the app cache; returns its size in bytes."""
+        result = await self._invoke_method("update_download", {"url": url}, timeout=600)
+        return int((result or {}).get("bytes", 0))
+
+    async def update_verify(self) -> dict[str, Any]:
+        """Same package, same signing key, newer version? ``{"ok": bool, "reason": str|None, ...}``"""
+        return dict(await self._invoke_method("update_verify", {}, timeout=60) or {})
+
+    async def update_install(self) -> str:
+        """``"started"``, ``"needs_permission"`` (settings opened) or a refusal reason."""
+        return str(await self._invoke_method("update_install", {}, timeout=120))

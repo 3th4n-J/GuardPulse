@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Callable
 
 import flet as ft
 
+from .. import __version__, updates
 from ..guard import Guard, GuardError, Locked
 from ..native import NativeBridge
 from . import theme, views
@@ -30,6 +32,7 @@ class App:
         self.body = ft.Container(expand=True)
         self.lock_chip = ft.Container()
         self._dialogs: list[ft.DialogControl] = []
+        self.update: updates.Release | None = None  # newer release, once found
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -37,11 +40,123 @@ class App:
         page = self.page
         page.title = "GuardPulse"
         theme.apply(page)
+        previous = self.guard.note_app_version(__version__)
         if not self.guard.is_setup and not self.guard.history(1):
             Onboarding(self).show()
         else:
             self.show_main()
+            if previous:
+                self.toast(f"Updated to {__version__} - all your rules and settings came along")
+            if self.guard.recovered:
+                self.toast("Your data was found and restored after the update")
         page.run_task(self._tick)
+        page.run_task(self.check_for_updates, False)
+
+    # --- updates ---------------------------------------------------------------
+
+    async def check_for_updates(self, manual: bool = True) -> None:
+        """Daily silent check; ``manual`` (About button) always checks and reports."""
+        last = float(self.guard.meta("update_checked_at") or 0)
+        if not manual and time.time() - last < updates.CHECK_EVERY_SECONDS:
+            return
+        if manual:
+            self.toast("Checking for updates…")  # GitHub can take a few seconds
+        release, reached = await updates.latest_release()
+        if not reached:
+            if manual:
+                self.toast("Couldn't reach GitHub - check your connection", error=True)
+            return
+        self.guard.set_meta("update_checked_at", str(time.time()))
+        if release is not None and updates.is_newer(release.tag, __version__):
+            self.update = release
+            if manual:
+                self.show_update(release)
+            elif self.page.navigation_bar is not None:
+                self.render()
+        elif manual:
+            self.toast(f"You're on the latest version ({__version__})")
+
+    def show_update(self, release: updates.Release) -> None:
+        status = ft.Text("", size=12, color=theme.AMBER, visible=False)
+        busy = ft.ProgressRing(width=18, height=18, stroke_width=2, visible=False)
+
+        def progress(message: str) -> None:
+            status.value, status.visible, busy.visible = message, True, True
+            status.color = theme.MUTED
+            status.update()
+            busy.update()
+
+        async def run_update():
+            update_btn.disabled = True
+            update_btn.update()
+            # private safety copy first - an in-place update keeps data anyway,
+            # this covers a damaged file or a future storage move
+            self.guard.snapshot(f"before-{release.version}")
+            result = await self.native.update_app(release.apk_url, progress)
+            busy.visible = False
+            if result == "started":
+                status.value, status.color = "Confirm the install on Android's screen. GuardPulse restarts on the new version.", theme.PULSE
+            elif result == "needs_permission":
+                status.value, status.color = (
+                    "Allow \"Install unknown apps\" for GuardPulse on the screen that just opened, "
+                    "then come back and tap Update again.",
+                    theme.AMBER,
+                )
+            else:
+                status.value, status.color = result, theme.DANGER
+            status.visible = True
+            update_btn.disabled = False
+            status.update()
+            busy.update()
+            update_btn.update()
+
+        update_btn = ft.FilledButton(
+            "Update now",
+            icon=ft.Icons.SYSTEM_UPDATE,
+            on_click=lambda _: self.page.run_task(run_update),
+            visible=self.native.available and bool(release.apk_url),
+        )
+        self.open_dialog(
+            ft.AlertDialog(
+                icon=ft.Icon(ft.Icons.NEW_RELEASES_OUTLINED, color=theme.CYAN, size=32),
+                title=ft.Text(f"GuardPulse {release.version}", text_align=ft.TextAlign.CENTER),
+                content=ft.Column(
+                    [
+                        ft.Text(f"You have {__version__}.", size=12, color=theme.MUTED),
+                        ft.Container(
+                            ft.Markdown(release.notes or "_No release notes._", selectable=True),
+                            height=200 if len(release.notes) > 300 else None,
+                        ),
+                        theme.card(
+                            ft.Row(
+                                [
+                                    ft.Icon(ft.Icons.VERIFIED_USER_OUTLINED, color=theme.PULSE),
+                                    ft.Text(
+                                        "Your data stays put. GuardPulse checks the download is signed with "
+                                        "its own key so Android updates in place, and keeps a private safety "
+                                        "copy first.",
+                                        size=12,
+                                        color=theme.MUTED,
+                                        expand=True,
+                                    ),
+                                ]
+                            ),
+                            padding=10,
+                        ),
+                        ft.Row([busy, status], spacing=8),
+                    ],
+                    tight=True,
+                    spacing=10,
+                    width=360,
+                    scroll=ft.ScrollMode.AUTO,
+                ),
+                actions=[
+                    ft.TextButton("Later", on_click=lambda _: self.close_dialog()),
+                    ft.TextButton("Release page", url=release.page_url),
+                    update_btn,
+                ],
+            )
+        )
 
     def show_main(self) -> None:
         page = self.page
@@ -297,6 +412,8 @@ class App:
                 duration=ft.Duration(seconds=4 if error else 2),
             )
         )
+        # toasts raised from background tasks (update check) aren't auto-flushed
+        self.page.update()
 
     # --- header + unlock timer ---------------------------------------------
 

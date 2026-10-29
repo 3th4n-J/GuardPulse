@@ -22,6 +22,8 @@ except ImportError:  # pragma: no cover - depends on the environment
 
 # native events that mean protection was weakened outside the app
 TAMPER_EVENTS = {"vpn_revoked", "policy_signature_invalid", "accessibility_disabled"}
+# GuardPulse release key (CN=Ethan Johnston, OU=GuardPulse); see build-release.ps1
+RELEASE_SIGNER_SHA256 = "6aba3b6c14d4f19c9373ec672320ce6724499a94e34a7ad489d1b3f08b0e6db8"
 FAMILY_PRIVATE_DNS = "family.cloudflare-dns.com"
 
 
@@ -41,6 +43,9 @@ class NativeBridge:
         self.service = None
         self.state: dict[str, Any] = {}
         self.installed_apps: list[dict[str, str]] = []
+        self.app_info: dict[str, Any] = {}
+        self.icons: dict[str, str] = {}  # package -> base64 PNG, from this phone only
+        self._no_icon: set[str] = set()
         self._configured = False
         if page is not None and GuardNative is not None and page.platform == ft.PagePlatform.ANDROID:
             self.service = GuardNative()
@@ -134,9 +139,19 @@ class NativeBridge:
                 # needs to learn where policy.json lives independently
                 await self.service.configure(str(self.folder))
                 self._configured = True
+            if not self.app_info:
+                self.app_info = await self.service.app_info()
             self.state = await self.service.status()
         except Exception:  # noqa: BLE001 - a status failure must never break the UI
             self.state = {}
+
+    @property
+    def official_build(self) -> bool | None:
+        """Signed with the GuardPulse release key? None when unknown (desktop)."""
+        signers = self.app_info.get("signer_sha256")
+        if not signers:
+            return None
+        return RELEASE_SIGNER_SHA256 in signers
 
     async def enable_filter(self) -> bool:
         """VPN consent (first time only), then start. False if the user declined."""
@@ -180,7 +195,42 @@ class NativeBridge:
                 self.installed_apps = await self.service.list_apps()
             except Exception:  # noqa: BLE001 - picker falls back to manual entry
                 self.installed_apps = []
+            for app in self.installed_apps:
+                if app.get("icon"):
+                    self.icons.setdefault(app["package"], app["icon"])
         return self.installed_apps
+
+    async def load_icons(self, packages: list[str]) -> bool:
+        """Fetch icons for packages we don't have yet. True if any new ones arrived."""
+        missing = [p for p in packages if p not in self.icons and p not in self._no_icon]
+        if not self.service or not missing:
+            return False
+        try:
+            found = await self.service.app_icons(missing)
+        except Exception:  # noqa: BLE001 - letter badges are a fine fallback
+            return False
+        self.icons.update(found)
+        self._no_icon.update(p for p in missing if p not in found)
+        return bool(found)
+
+    # --- self-update ----------------------------------------------------------
+
+    async def update_app(self, apk_url: str, progress) -> str:
+        """Download -> verify (same key, newer) -> install. Returns "started",
+        "needs_permission" or a human-readable refusal/failure reason."""
+        if not self.service:
+            return "Updating from inside the app works on Android only."
+        try:
+            progress("Downloading update…")
+            await self.service.update_download(apk_url)
+            progress("Checking it's a genuine GuardPulse update…")
+            check = await self.service.update_verify()
+            if not check.get("ok"):
+                return check.get("reason") or "The update failed its safety check."
+            progress("Handing it to Android…")
+            return await self.service.update_install()
+        except Exception as exc:  # noqa: BLE001 - shown to the user
+            return f"Update failed: {exc}"
 
     # --- events from Kotlin -------------------------------------------------
 

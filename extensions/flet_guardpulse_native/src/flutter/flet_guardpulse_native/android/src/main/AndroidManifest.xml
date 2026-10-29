@@ -4,6 +4,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- self-update from GitHub releases (user confirms every install) -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Android 11+ package visibility: list launchable apps for the app picker -->
     <queries>
@@ -41,6 +43,10 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/guardpulse_accessibility" />
         </service>
+
+        <receiver
+            android:name="za.co.guardpulse.shield.UpdateReceiver"
+            android:exported="false" />
 
         <receiver
             android:name="za.co.guardpulse.shield.BootReceiver"

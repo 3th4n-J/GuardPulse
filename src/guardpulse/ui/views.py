@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
 from typing import TYPE_CHECKING
 
@@ -60,6 +61,11 @@ ACTION_LABELS = {
     "filter.enabled": ("DNS filter on", ft.Icons.VPN_LOCK_OUTLINED),
     "filter.disabled": ("DNS filter off", ft.Icons.POWER_SETTINGS_NEW),
     "overlay.setup_opened": ("Overlay setup opened", ft.Icons.LAYERS_OUTLINED),
+    "app.updated": ("App updated", ft.Icons.SYSTEM_UPDATE),
+    "data.snapshot": ("Safety copy saved", ft.Icons.SAVE_OUTLINED),
+    "data.recovered": ("Data restored", ft.Icons.RESTORE),
+    "native.update_installed": ("Update installed", ft.Icons.SYSTEM_UPDATE),
+    "native.update_failed": ("Update failed", ft.Icons.ERROR_OUTLINE),
     "overlay.disabled": ("Security overlay off", ft.Icons.LAYERS_CLEAR_OUTLINED),
     "native.vpn_not_prepared": ("VPN permission missing", ft.Icons.GPP_MAYBE_OUTLINED),
 }
@@ -170,6 +176,18 @@ def home(app: App) -> list[ft.Control]:
                     ]
                 ),
                 border_color=theme.AMBER,
+            )
+        )
+
+    if app.update:
+        release = app.update
+        out.append(
+            _notice(
+                ft.Icons.NEW_RELEASES_OUTLINED,
+                f"Update available: {release.version}",
+                "See what's new. Updating keeps all your rules, partner and history.",
+                theme.CYAN,
+                action=ft.TextButton("View", on_click=lambda _: app.show_update(release)),
             )
         )
 
@@ -388,7 +406,7 @@ def sites(app: App) -> list[ft.Control]:
         app.render()
 
     field = ft.TextField(
-        hint_text="example.com or a full link",
+        hint_text="example.com, *.example.com or a full link",
         prefix_icon=ft.Icons.LINK,
         keyboard_type=ft.KeyboardType.URL,
         expand=True,
@@ -416,8 +434,8 @@ def sites(app: App) -> list[ft.Control]:
             on_change=switch_kind,
         ),
         ft.Text(
-            "Blocks cover every sub-domain (blocking example.com also blocks m.example.com). "
-            "Adding a block never needs a PIN."
+            "Every block is a wildcard: example.com also blocks www., m. and any other "
+            "sub-domain (same as *.example.com). Adding a block never needs a PIN."
             if kind == "block"
             else "Whitelisted sites are always allowed, even if a broader block or Family DNS "
             "would stop them. Whitelisting needs your partner's PIN.",
@@ -477,9 +495,37 @@ def sites(app: App) -> list[ft.Control]:
 # --- Apps ------------------------------------------------------------------
 
 
+def _app_icon(app: App, pkg: str, label: str, size: int) -> ft.Control:
+    """The app's real icon from this phone, or a letter badge (nothing bundled)."""
+    icon = app.native.icons.get(pkg)
+    if icon:
+        return ft.Image(src=base64.b64decode(icon), width=size, height=size, border_radius=size * 0.22)
+    return ft.Container(
+        ft.Text((label or pkg)[:1].upper(), size=size * 0.45, weight=ft.FontWeight.W_800, color=theme.NAVY),
+        width=size,
+        height=size,
+        border_radius=size * 0.28,
+        bgcolor=theme.TEAL,
+        alignment=ft.Alignment.CENTER,
+    )
+
+
+def _fetch_icons_then_render(app: App, packages: list[str]) -> None:
+    """Ask Android for any icons we haven't got; re-render the Apps tab once if some arrive."""
+    if not app.native.available:
+        return
+
+    async def run():
+        if await app.native.load_icons(packages) and app.tab == 2:
+            app.render()
+
+    app.page.run_task(run)
+
+
 def apps(app: App) -> list[ft.Control]:
     g = app.guard
     blocked = {a.package for a in g.blocked_apps()}
+    _fetch_icons_then_render(app, [pkg for _, pkg in POPULAR_APPS] + sorted(blocked))
     package = ft.TextField(
         hint_text="Package name, e.g. org.telegram.messenger",
         prefix_icon=ft.Icons.ANDROID,
@@ -503,7 +549,9 @@ def apps(app: App) -> list[ft.Control]:
             [
                 ft.Chip(
                     label=ft.Text(label),
-                    leading=ft.Icon(ft.Icons.CHECK if pkg in blocked else ft.Icons.ADD, size=16),
+                    leading=_app_icon(app, pkg, label, 20)
+                    if pkg in app.native.icons
+                    else ft.Icon(ft.Icons.CHECK if pkg in blocked else ft.Icons.ADD, size=16),
                     selected=pkg in blocked,
                     selected_color=ft.Colors.with_opacity(0.25, theme.DANGER),
                     show_checkmark=False,
@@ -569,7 +617,7 @@ def apps(app: App) -> list[ft.Control]:
                 ft.Column(
                     [
                         ft.ListTile(
-                            leading=ft.Icon(ft.Icons.APP_BLOCKING_OUTLINED, color=theme.DANGER),
+                            leading=_app_icon(app, a.package, a.label, 32),
                             title=ft.Text(a.label, color=theme.TEXT),
                             subtitle=ft.Text(a.package, size=12, color=theme.MUTED),
                             trailing=_remove_button(
@@ -720,7 +768,7 @@ def _schedule_dialog(app: App) -> None:
         | {a["package"]: a["label"] for a in app.native.installed_apps}
         | {a.package: a.label for a in g.blocked_apps()}
     )
-    search, checklist = _app_checklist(choices, state["apps"])
+    search, checklist = _app_checklist(choices, state["apps"], lambda p, l: _app_icon(app, p, l, 24))
 
     def save(_):
         apps_ = set(state["apps"])
@@ -775,14 +823,25 @@ def _toggle(bucket: set, item: str, on: bool) -> None:
     (bucket.add if on else bucket.discard)(item)
 
 
-def _app_checklist(choices: dict[str, str], selected: set[str]) -> tuple[ft.TextField, ft.Column]:
-    """Search box + checkbox list over ``{package: label}``; ticks land in ``selected``."""
+def _app_checklist(
+    choices: dict[str, str], selected: set[str], icon=None
+) -> tuple[ft.TextField, ft.Column]:
+    """Search box + checkbox list over ``{package: label}``; ticks land in ``selected``.
+
+    ``icon(package, label)`` returns a leading control (the app's icon)."""
     rows = [
-        ft.Checkbox(
-            label=label,
-            value=pkg in selected,
+        ft.Row(
+            ([icon(pkg, label)] if icon else [])
+            + [
+                ft.Checkbox(
+                    label=label,
+                    value=pkg in selected,
+                    on_change=lambda e, p=pkg: _toggle(selected, p, e.control.value),
+                    expand=True,
+                )
+            ],
+            spacing=8,
             data=f"{label} {pkg}".lower(),
-            on_change=lambda e, p=pkg: _toggle(selected, p, e.control.value),
         )
         for pkg, label in sorted(choices.items(), key=lambda kv: kv[1].lower())
     ]
@@ -818,7 +877,7 @@ def _installed_picker(app: App) -> None:
     already = {a.package for a in g.blocked_apps()}
     choices = {a["package"]: a["label"] for a in app.native.installed_apps if a["package"] not in already}
     picked: set[str] = set()
-    search, checklist = _app_checklist(choices, picked)
+    search, checklist = _app_checklist(choices, picked, lambda p, l: _app_icon(app, p, l, 24))
 
     def save(_):
         for pkg in sorted(picked):
@@ -1014,11 +1073,19 @@ def settings(app: App) -> list[ft.Control]:
         if rows
         else theme.empty_state(ft.Icons.HISTORY, "Nothing yet", "Every change is recorded here.")
     )
-    out += [theme.section_title("About", ft.Icons.INFO_OUTLINE), _about_card()]
+    out += [theme.section_title("About", ft.Icons.INFO_OUTLINE), _about_card(app)]
     return out
 
 
-def _about_card() -> ft.Control:
+def _about_card(app: App) -> ft.Control:
+    official = app.native.official_build
+    if official is True:
+        build = theme.pill("Official build", theme.PULSE, ft.Icons.VERIFIED_OUTLINED)
+    elif official is False:
+        build = theme.pill("Test build - updates via adb", theme.AMBER, ft.Icons.CONSTRUCTION)
+    else:
+        build = None
+    newer = app.update
     def fact(icon: ft.IconData, text: str) -> ft.Control:
         return ft.Row(
             [ft.Icon(icon, size=16, color=theme.CYAN), ft.Text(text, size=12, color=theme.MUTED, expand=True)],
@@ -1030,7 +1097,19 @@ def _about_card() -> ft.Control:
             [
                 ft.Image(src="icon.png", width=112, height=112),
                 ft.Text("GuardPulse", size=22, weight=ft.FontWeight.W_800, color=theme.TEXT),
-                theme.pill(f"Version {__version__}", theme.CYAN, ft.Icons.NEW_RELEASES_OUTLINED),
+                ft.Row(
+                    [theme.pill(f"Version {__version__}", theme.CYAN, ft.Icons.NEW_RELEASES_OUTLINED)]
+                    + ([build] if build else []),
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    wrap=True,
+                    spacing=6,
+                ),
+                ft.FilledButton(
+                    f"Update to {newer.version}" if newer else "Check for updates",
+                    icon=ft.Icons.SYSTEM_UPDATE if newer else ft.Icons.REFRESH,
+                    on_click=(lambda _: app.show_update(newer)) if newer
+                    else (lambda _: app.page.run_task(app.check_for_updates, True)),
+                ),
                 ft.Text(
                     "A completely free content blocker with accountability controls.",
                     size=13,
@@ -1046,6 +1125,15 @@ def _about_card() -> ft.Control:
                     "Source on GitHub",
                     icon=ft.Icons.CODE,
                     url="https://github.com/3th4n-J/GuardPulse",
+                ),
+                ft.Text(
+                    spans=[
+                        ft.TextSpan("Built by Ethan with "),
+                        ft.TextSpan("❤️", style=ft.TextStyle(color=theme.DANGER)),
+                    ],
+                    size=12,
+                    color=theme.MUTED,
+                    text_align=ft.TextAlign.CENTER,
                 ),
             ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,

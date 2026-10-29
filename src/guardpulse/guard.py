@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from . import db, security
+from . import db, safety, security
 from .domains import most_specific, normalize_domain, normalize_package
 
 DEFAULT_SETTINGS: dict[str, object] = {
@@ -120,6 +120,8 @@ class Guard:
         clock: Callable[[], float] = time.time,
     ):
         self.folder = folder or db.data_dir()
+        # an update must never start on an empty database (see safety.py)
+        self.recovered = safety.recover_if_missing(self.folder)
         self.conn = db.connect(self.folder / "guardpulse.db")
         self.keys = key_provider or security.FileKeyProvider(self.folder / "seal.key")
         self.clock = clock
@@ -129,6 +131,43 @@ class Guard:
         # aren't mistaken for an outside edit
         self.tampered = self._check_seal()
         self._seed_settings()
+        if self.recovered:
+            self._audit("data.recovered", self.recovered)
+
+    # --- app version / backups ---------------------------------------------
+
+    def note_app_version(self, version: str) -> str | None:
+        """Record the running version; returns the previous one after an update."""
+        row = self.conn.execute("SELECT value FROM meta WHERE key = 'app_version'").fetchone()
+        previous = row["value"] if row else None
+        if previous == version:
+            return None
+        self.conn.execute(
+            "INSERT INTO meta (key, value) VALUES ('app_version', ?)"
+            " ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            (version,),
+        )
+        if previous is not None:
+            self._audit("app.updated", f"{previous} -> {version}")
+        return previous
+
+    def snapshot(self, label: str) -> Path:
+        """Private safety copy of all data, e.g. right before installing an update."""
+        path = safety.snapshot(self.folder, self.conn, label)
+        self._audit("data.snapshot", label)
+        return path
+
+    def meta(self, key: str) -> str | None:
+        row = self.conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        """Unsealed bookkeeping (update checks etc.) - never rules or settings."""
+        self.conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?)"
+            " ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
 
     # --- partner / unlock --------------------------------------------------
 
