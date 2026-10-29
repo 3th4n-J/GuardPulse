@@ -7,10 +7,12 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -96,6 +98,108 @@ class BlockOverlay(private val service: AccessibilityService) {
             // window token gone (service unbinding) - nothing to cover
         }
     }
+
+    /**
+     * Full-screen partner-PIN prompt over a sensitive Settings screen.
+     * ``onPin(entered)`` returns an error message to show, or null on success
+     * (the caller dismisses). ``onBack`` leaves the screen.
+     */
+    fun showPinPrompt(
+        key: String,
+        title: String,
+        message: String,
+        onPin: (String) -> String?,
+        onBack: () -> Unit,
+    ) {
+        if (this.key == key && view != null) return
+        hide()
+        val root = LinearLayout(service).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(0xFF06122B.toInt())
+            val pad = px(28)
+            setPadding(pad, pad, pad, pad)
+            isClickable = true
+        }
+        root.addView(ImageView(service).apply {
+            setImageResource(service.applicationInfo.icon)
+            layoutParams = LinearLayout.LayoutParams(px(72), px(72)).apply { bottomMargin = px(20) }
+        })
+        root.addView(text(title, 22f, 0xFFE6F1FF.toInt(), bold = true))
+        root.addView(text(message, 14f, 0xFF8FA3C7.toInt()).apply {
+            (layoutParams as LinearLayout.LayoutParams).topMargin = px(10)
+        })
+        val error = text("", 13f, 0xFFF87171.toInt()).apply {
+            (layoutParams as LinearLayout.LayoutParams).topMargin = px(12)
+            visibility = View.GONE
+        }
+        val field = EditText(service).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            hint = "Partner PIN"
+            setHintTextColor(0xFF5A6E92.toInt())
+            setTextColor(0xFFE6F1FF.toInt())
+            gravity = Gravity.CENTER
+            setPadding(px(16), px(14), px(16), px(14))
+            background = GradientDrawable().apply {
+                cornerRadius = px(14).toFloat()
+                setColor(0xFF0C1E42.toInt())
+                setStroke(px(1), 0xFF1F3B73.toInt())
+            }
+            layoutParams = LinearLayout.LayoutParams(px(240), LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = px(20)
+            }
+        }
+        root.addView(field)
+        root.addView(error)
+
+        fun submit() {
+            val msg = onPin(field.text.toString())
+            if (msg == null) {
+                hide()
+            } else {
+                error.text = msg
+                error.visibility = View.VISIBLE
+                field.setText("")
+            }
+        }
+
+        val buttons = LinearLayout(service).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = px(20) }
+        }
+        buttons.addView(pillButton("Go back", 0xFF13295A.toInt(), 0xFFE6F1FF.toInt()) { onBack(); hide() })
+        buttons.addView(pillButton("Unlock", 0xFF1D50C5.toInt(), 0xFFFFFFFF.toInt()) { submit() }
+            .apply { (layoutParams as LinearLayout.LayoutParams).leftMargin = px(12) })
+        root.addView(buttons)
+
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT,
+        )
+        try {
+            wm.addView(root, lp)
+            view = root
+            this.key = key
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun pillButton(label: String, bg: Int, fg: Int, onClick: () -> Unit) =
+        text(label, 15f, fg, bold = true).apply {
+            background = GradientDrawable().apply {
+                cornerRadius = px(24).toFloat()
+                setColor(bg)
+            }
+            setPadding(px(24), px(12), px(24), px(12))
+            isClickable = true
+            setOnClickListener { onClick() }
+        }
 
     /** Small pill at the bottom for ~1.5 s, e.g. after bouncing out of Shorts. Doesn't take touches. */
     fun flash(message: String) {

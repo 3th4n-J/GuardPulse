@@ -61,6 +61,11 @@ ACTION_LABELS = {
     "filter.enabled": ("DNS filter on", ft.Icons.VPN_LOCK_OUTLINED),
     "filter.disabled": ("DNS filter off", ft.Icons.POWER_SETTINGS_NEW),
     "overlay.setup_opened": ("Overlay setup opened", ft.Icons.LAYERS_OUTLINED),
+    "uninstall.enabled": ("Uninstall protection on", ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED),
+    "uninstall.disabled": ("Uninstall protection off", ft.Icons.GPP_BAD_OUTLINED),
+    "native.device_admin_removed": ("Uninstall protection removed", ft.Icons.GPP_BAD_OUTLINED),
+    "native.settings_unlocked": ("Settings unlocked with PIN", ft.Icons.LOCK_OPEN),
+    "native.settings_pin_failed": ("Wrong PIN at Settings", ft.Icons.GPP_BAD_OUTLINED),
     "app.updated": ("App updated", ft.Icons.SYSTEM_UPDATE),
     "data.snapshot": ("Safety copy saved", ft.Icons.SAVE_OUTLINED),
     "data.recovered": ("Data restored", ft.Icons.RESTORE),
@@ -299,6 +304,17 @@ def home(app: App) -> list[ft.Control]:
                 action=ft.TextButton("Open", on_click=lambda _: app.open_vpn_settings()),
             )
         )
+    admin_off = app.native.admin_off_warning()
+    if admin_off:
+        out.append(
+            _notice(
+                ft.Icons.GPP_BAD_OUTLINED,
+                "Uninstall protection is off",
+                admin_off,
+                theme.DANGER,
+                action=ft.TextButton("Fix", on_click=lambda _: app.enable_uninstall()),
+            )
+        )
     overlay_off = app.native.overlay_off_warning()
     if overlay_off:
         out.append(
@@ -313,6 +329,7 @@ def home(app: App) -> list[ft.Control]:
     switches = {
         "vpn": (app.enable_filter, app.disable_filter),
         "accessibility": (app.enable_overlay, app.disable_overlay),
+        "device_admin": (app.enable_uninstall, app.disable_uninstall),
     }
     for comp in app.native.status():
         turn_on, turn_off = switches.get(comp.key, (None, None))
@@ -956,10 +973,10 @@ def settings(app: App) -> list[ft.Control]:
                     flag("family_dns", "Cloudflare Family DNS", "Filter adult content + malware for every app", ft.Icons.DNS_OUTLINED),
                     flag("browser_overlay", "Security overlay", "Cover blocked sites in any browser", ft.Icons.LAYERS_OUTLINED),
                     flag(
-                        "uninstall_protection",
-                        "Uninstall protection",
-                        "Partner PIN needed to remove GuardPulse",
-                        ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED,
+                        "settings_guard",
+                        "Guard Settings pages",
+                        "Partner PIN to uninstall, force-stop or switch GuardPulse off in Android Settings",
+                        ft.Icons.POLICY_OUTLINED,
                     ),
                 ],
                 spacing=0,

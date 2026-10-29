@@ -34,6 +34,7 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "feed_facebook_reels": True,
     "feed_snapchat_spotlight": True,
     "uninstall_protection": False,
+    "settings_guard": False,
     "unlock_minutes": 5,
     "alert_webhook_url": "",
 }
@@ -45,6 +46,7 @@ PROTECTIVE_FLAGS = {
     "feed_facebook_reels",
     "feed_snapchat_spotlight",
     "uninstall_protection",
+    "settings_guard",
 }
 UNLOCK_MINUTES_RANGE = (1, 30)
 
@@ -196,8 +198,15 @@ class Guard:
                 " VALUES (1, ?, ?, ?, ?, ?)",
                 (name, (contact or "").strip(), security.hash_pin(pin), secret, self.clock()),
             )
+            self._write_native_auth(pin)
             self._audit("partner.setup", name, "setup")
         return secret
+
+    def _write_native_auth(self, pin: str) -> None:
+        """Write the HMAC-sealed PBKDF2 PIN hash the Kotlin settings-guard verifies offline."""
+        payload = security.pbkdf2_hash(pin).encode()
+        (self.folder / "pin.verify").write_bytes(payload)
+        (self.folder / "pin.verify.sig").write_text(security.seal(self.keys.get_key(), payload))
 
     def totp_uri(self) -> str:
         self._require("view the authenticator QR code")
@@ -270,6 +279,7 @@ class Guard:
         new_pin = security.validate_pin(new_pin)
         with self._tx():
             self.conn.execute("UPDATE partner SET pin_hash = ?", (security.hash_pin(new_pin),))
+            self._write_native_auth(new_pin)
             self._audit("partner.pin_changed", "", self._unlocked_by)
             self._queue("pin_changed", {})
 
@@ -487,6 +497,10 @@ class Guard:
     def authorise_overlay_off(self) -> None:
         """Gate + record switching the security overlay off from inside the app."""
         self._authorise_off("overlay.disabled", "security_overlay", "turn the security overlay off")
+
+    def authorise_uninstall_off(self) -> None:
+        """Gate + record switching uninstall protection off from inside the app."""
+        self._authorise_off("uninstall.disabled", "uninstall_protection", "turn uninstall protection off")
 
     def _authorise_off(self, action: str, setting: str, reason: str) -> None:
         self._require(reason)

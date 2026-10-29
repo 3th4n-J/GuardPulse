@@ -309,6 +309,30 @@ class App:
         self.toast("Security overlay is off")
         self.render()
 
+    # --- uninstall protection (Android device admin) -------------------------
+
+    def enable_uninstall(self) -> None:
+        async def run():
+            await self.native.enable_uninstall_protection()
+            self.guard.note("uninstall.enabled")
+            if not self.native.admin_active:
+                self.toast("Activate GuardPulse on the screen that opened, then come back.")
+            self.render()
+
+        self.page.run_task(run)
+
+    def disable_uninstall(self) -> None:
+        def gate():
+            self.guard.authorise_uninstall_off()
+            self.page.run_task(self._stop_uninstall)
+
+        self.act(gate)
+
+    async def _stop_uninstall(self) -> None:
+        await self.native.disable_uninstall_protection()
+        self.toast("Uninstall protection is off")
+        self.render()
+
     def ask_pin(self, reason: str, then: Callable[[], None] | None = None) -> None:
         field = ft.TextField(
             label="Partner PIN or authenticator code",
@@ -487,6 +511,8 @@ class App:
             "private_dns_host",
             "overlay_enabled",
             "overlay_wanted",
+            "device_admin_active",
+            "device_admin_wanted",
         )
         before = {k: self.native.state.get(k) for k in keys}
         await self.native.refresh()

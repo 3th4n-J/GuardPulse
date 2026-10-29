@@ -2,6 +2,8 @@ package za.co.guardpulse.shield
 
 import android.Manifest
 import android.app.Activity
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -96,6 +98,24 @@ class GuardPulseShieldPlugin :
             "stop_overlay" -> {
                 val service = GuardAccessibilityService.instance
                 if (service != null) service.stopByApp() else Store.setOverlayWanted(context, false)
+                result.success(true)
+            }
+            "device_admin_active" -> result.success(isAdminActive())
+            "request_device_admin" -> {
+                Store.setAdminWanted(context, true)
+                val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+                    .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent())
+                    .putExtra(
+                        DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                        "Lets GuardPulse block its own uninstall until your partner's PIN is entered.",
+                    )
+                open(intent)
+                result.success(true)
+            }
+            "remove_device_admin" -> {
+                // the app gates this behind the partner PIN before calling
+                Store.setAdminWanted(context, false)
+                if (isAdminActive()) dpm().removeActiveAdmin(adminComponent())
                 result.success(true)
             }
             "list_apps" -> listApps(result)
@@ -233,8 +253,18 @@ class GuardPulseShieldPlugin :
             "overlay_blocked_apps" to GuardAccessibilityService.blockedApps.get(),
             "overlay_blocked_sites" to GuardAccessibilityService.blockedSites.get(),
             "overlay_blocked_feeds" to GuardAccessibilityService.blockedFeeds.get(),
+            "device_admin_active" to isAdminActive(),
+            "device_admin_wanted" to Store.adminWanted(context),
         )
     }
+
+    private fun dpm(): DevicePolicyManager =
+        context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+
+    private fun adminComponent(): ComponentName =
+        ComponentName(context, GuardDeviceAdminReceiver::class.java)
+
+    private fun isAdminActive(): Boolean = dpm().isAdminActive(adminComponent())
 
     private fun prepareVpn(result: MethodChannel.Result) {
         val consent = VpnService.prepare(context)

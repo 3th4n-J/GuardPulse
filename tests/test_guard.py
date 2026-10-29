@@ -67,6 +67,14 @@ class SecurityTests(unittest.TestCase):
                 security.validate_pin(weak)
         self.assertEqual(security.validate_pin(" 4826 "), "4826")
 
+    def test_pbkdf2_roundtrip(self):
+        stored = security.pbkdf2_hash("4826")
+        self.assertTrue(stored.startswith("pbkdf2$"))
+        self.assertNotIn("4826", stored)
+        self.assertTrue(security.verify_pbkdf2("4826", stored))
+        self.assertFalse(security.verify_pbkdf2("4827", stored))
+        self.assertFalse(security.verify_pbkdf2("4826", "bogus"))
+
     def test_totp_rfc6238_vector(self):
         # RFC 6238 appendix B, SHA-1, T = 59 -> 94287082 (last 6 digits 287082)
         secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
@@ -259,6 +267,37 @@ class NativeGlueTests(GuardTestCase):
         self.guard.unlock(PIN)
         self.guard.authorise_filter_off()
         self.assertIn("protection_disabled", [r["event"] for r in self.guard.pending_alerts()])
+
+    def test_native_pin_file_written_and_sealed(self):
+        self.setup_partner()
+        payload = (self.folder / "pin.verify").read_bytes()
+        sig = (self.folder / "pin.verify.sig").read_text()
+        self.assertTrue(security.seal_ok(self.guard.keys.get_key(), payload, sig))
+        self.assertTrue(security.verify_pbkdf2(PIN, payload.decode()))
+        self.assertNotIn(PIN.encode(), payload)  # a hash, not the PIN
+
+    def test_native_pin_file_follows_pin_change(self):
+        self.setup_partner()
+        self.guard.unlock(PIN)
+        self.guard.change_pin("7391")
+        payload = (self.folder / "pin.verify").read_bytes()
+        self.assertTrue(security.verify_pbkdf2("7391", payload.decode()))
+        self.assertFalse(security.verify_pbkdf2(PIN, payload.decode()))
+
+    def test_uninstall_off_needs_partner(self):
+        self.setup_partner()
+        with self.assertRaises(Locked):
+            self.guard.authorise_uninstall_off()
+        self.guard.unlock(PIN)
+        self.guard.authorise_uninstall_off()
+        self.assertEqual(self.guard.history(1)[0]["action"], "uninstall.disabled")
+
+    def test_settings_guard_toggle_ratchet(self):
+        self.setup_partner()
+        self.guard.set_setting("settings_guard", True)  # turning on is free
+        self.assertTrue(self.guard.setting("settings_guard"))
+        with self.assertRaises(Locked):  # turning off needs the partner
+            self.guard.set_setting("settings_guard", False)
 
     def test_overlay_off_needs_partner(self):
         self.setup_partner()
