@@ -530,14 +530,21 @@ def apps(app: App) -> list[ft.Control]:
             size=12,
             color=theme.MUTED,
         ),
-        theme.section_title("Short-video feeds", ft.Icons.SLOW_MOTION_VIDEO),
+        theme.section_title("Block short-video feeds", ft.Icons.SLOW_MOTION_VIDEO),
         theme.card(
             ft.Column(
                 [
                     ft.ListTile(
                         leading=ft.Icon(icon, color=theme.CYAN),
-                        title=ft.Text(label, color=theme.TEXT),
-                        subtitle=ft.Text("Rest of the app keeps working", size=12, color=theme.MUTED),
+                        title=ft.Text(f"Block {label}", color=theme.TEXT),
+                        # switch ON = blocked; spell it out so "off" isn't read as "turn the feed off"
+                        subtitle=ft.Text(
+                            "On: blocked · the rest of the app still works"
+                            if settings[key]
+                            else "Off: allowed · switch on to block",
+                            size=12,
+                            color=theme.PULSE if settings[key] else theme.AMBER,
+                        ),
                         trailing=ft.Switch(
                             value=bool(settings[key]),
                             active_color=theme.PULSE,
