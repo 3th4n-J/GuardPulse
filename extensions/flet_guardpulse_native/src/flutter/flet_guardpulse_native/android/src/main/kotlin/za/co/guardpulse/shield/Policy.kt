@@ -52,6 +52,16 @@ class Policy(
 
     fun decide(rawHost: String): Decision {
         val host = rawHost.trimEnd('.').lowercase()
+        if (flag("dork_guard")) {
+            // caches / archives / reader proxies that show other sites' pages
+            if (mostSpecific(host, DORK_BLOCK) != null && mostSpecific(host, allow) == null) return Decision.BLOCK
+            // Google Translate as a proxy: www-reddit-com.translate.goog serves reddit.com
+            proxiedHost(host)?.let { inner -> if (decideRules(inner) == Decision.BLOCK) return Decision.BLOCK }
+        }
+        return decideRules(host)
+    }
+
+    private fun decideRules(host: String): Decision {
         val b = mostSpecific(host, block + BUILTIN_BLOCK)
         val a = mostSpecific(host, allow + BUILTIN_ALLOW)
         if (b == null && a == null) return Decision.DEFAULT
@@ -85,6 +95,51 @@ class Policy(
 
         /** Cloudflare Family's own DoT/DoH name must keep resolving. */
         val BUILTIN_ALLOW = listOf("family.cloudflare-dns.com")
+
+        /**
+         * With dorking protection on: services that display another site's pages
+         * under their own name (search-engine caches, web archives, paywall/reader
+         * proxies), which would otherwise show blocked sites. A user's own
+         * whitelist entry still wins.
+         */
+        val DORK_BLOCK = listOf(
+            "webcache.googleusercontent.com",
+            "cachedview.nl",
+            "cachedview.com",
+            "cachedviews.com",
+            "web.archive.org",
+            "wayback.archive.org",
+            "archive.today",
+            "archive.ph",
+            "archive.is",
+            "archive.li",
+            "archive.vn",
+            "archive.md",
+            "archive.fo",
+            "ghostarchive.org",
+            "12ft.io",
+            "removepaywall.com",
+            "archive.ec",
+            "proxysite.com",
+            "croxyproxy.com",
+            "hide.me",
+            "hidester.com",
+            "kproxy.com",
+        )
+
+        /**
+         * Google Translate's proxy names: "www-reddit-com.translate.goog" serves
+         * www.reddit.com ("-" stands for "." and "--" for a real "-"). Returns the
+         * real host, or null for anything else.
+         */
+        fun proxiedHost(host: String): String? {
+            val h = host.trimEnd('.').lowercase()
+            if (!h.endsWith(".translate.goog")) return null
+            val encoded = h.removeSuffix(".translate.goog").substringAfterLast('.')
+            if (encoded.isEmpty()) return null
+            val decoded = encoded.replace("--", "\u0000").replace('-', '.').replace('\u0000', '-')
+            return decoded.takeIf { it.contains('.') && !it.startsWith('.') && !it.endsWith('.') }
+        }
 
         fun mostSpecific(host: String, rules: List<String>): String? {
             var best: String? = null

@@ -361,12 +361,13 @@ class App:
         self.render()
 
     def ask_pin(self, reason: str, then: Callable[[], None] | None = None) -> None:
-        field = ft.TextField(
-            label="Partner PIN or authenticator code",
+        field = theme.text_field(
+            label="Partner PIN or code",
             password=True,
             can_reveal_password=True,
             keyboard_type=ft.KeyboardType.NUMBER,
             max_length=12,
+            counter="",  # the "4/12" line costs height the number pad needs
             autofocus=True,
             prefix_icon=ft.Icons.KEY,
         )
@@ -395,18 +396,19 @@ class App:
         self.open_dialog(
             ft.AlertDialog(
                 modal=True,
-                icon=ft.Icon(ft.Icons.LOCK, color=theme.CYAN, size=32),
-                title=ft.Text("Partner approval needed", text_align=ft.TextAlign.CENTER),
+                title=ft.Row(
+                    [
+                        ft.Icon(ft.Icons.LOCK, color=theme.CYAN, size=22),
+                        ft.Text("Partner approval", size=19, weight=ft.FontWeight.W_700, color=theme.TEXT),
+                    ],
+                    spacing=8,
+                ),
                 content=ft.Column(
                     [
                         ft.Text(
-                            f"Hand the phone to your accountability partner to {reason}.",
-                            color=theme.MUTED,
-                        ),
-                        ft.Text(
-                            "Away from them? They can read you the 6-digit code from their "
-                            "authenticator app.",
-                            size=12,
+                            f"Your partner's PIN is needed to {reason}. Away from them? Use the "
+                            "6-digit code from their authenticator app.",
+                            size=13,
                             color=theme.MUTED,
                         ),
                         field,
@@ -429,8 +431,17 @@ class App:
         )
 
     def open_dialog(self, dialog: ft.DialogControl) -> None:
+        if isinstance(dialog, ft.AlertDialog):
+            # with the number pad up there's little height left: scroll instead of
+            # squashing the field on top of the buttons
+            dialog.scrollable = True
+            dialog.inset_padding = ft.Padding.symmetric(horizontal=16, vertical=12)
         self._dialogs.append(dialog)
         self.page.show_dialog(dialog)
+        # dialogs opened from background tasks (app list loading first) aren't
+        # flushed to the screen automatically - this is why "New schedule"
+        # sometimes needed a second tap
+        self.page.update()
 
     def close_dialog(self) -> None:
         """Close our newest dialog. ``page.pop_dialog`` would close a toast on top of it."""

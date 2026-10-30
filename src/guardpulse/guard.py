@@ -21,7 +21,7 @@ import secrets
 import sqlite3
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
@@ -37,6 +37,9 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "feed_snapchat_spotlight": True,
     "uninstall_protection": False,
     "settings_guard": False,
+    # search "dorking": searches naming blocked sites, Google Translate proxies of
+    # blocked sites, search caches / web archives / reader proxies
+    "dork_guard": True,
     "unlock_minutes": 5,
     # partner alerts go to https://ntfy.sh/<topic>; the topic is generated once a
     # partner exists and is the only "secret" (long + random = unguessable)
@@ -57,6 +60,7 @@ PROTECTIVE_FLAGS = {
     "feed_snapchat_spotlight",
     "uninstall_protection",
     "settings_guard",
+    "dork_guard",
 }
 UNLOCK_MINUTES_RANGE = (1, 30)
 
@@ -114,6 +118,24 @@ class Schedule:
             return bool(self.days >> today & 1)
         yesterday = (today - 1) % 7
         return bool(self.days >> yesterday & 1) and minute < self.end_min
+
+
+_A_MONDAY = datetime(2024, 1, 1)  # any Monday; only weekday + time matter
+
+
+def is_stricter_or_equal(old: Schedule, new: Schedule) -> bool:
+    """True if ``new`` locks at least every app ``old`` did, at every minute of the
+    week ``old`` was locking (ignoring pause state). Checked minute by minute, so
+    overnight windows and day changes can't fool it."""
+    if not set(old.packages) <= set(new.packages):
+        return False
+    probe_old = Schedule(old.id, old.name, old.days, old.start_min, old.end_min, old.packages, True)
+    probe_new = Schedule(new.id, new.name, new.days, new.start_min, new.end_min, new.packages, True)
+    for minute in range(7 * 24 * 60):
+        moment = _A_MONDAY + timedelta(minutes=minute)
+        if probe_old.active_at(moment) and not probe_new.active_at(moment):
+            return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -406,9 +428,8 @@ class Guard:
             for r in rows
         ]
 
-    def add_schedule(
-        self, name: str, days: int, start_min: int, end_min: int, packages: list[str]
-    ) -> Schedule:
+    @staticmethod
+    def _clean_schedule(name, days, start_min, end_min, packages) -> tuple[str, list[str]]:
         name = (name or "").strip() or "App lock"
         if not 1 <= days <= 127:
             raise GuardError("Pick at least one day.")
@@ -417,6 +438,36 @@ class Guard:
         clean = sorted({normalize_package(p) for p in packages})
         if not clean:
             raise GuardError("Pick at least one app to lock.")
+        return name, clean
+
+    def update_schedule(
+        self, schedule_id: int, name: str, days: int, start_min: int, end_min: int, packages: list[str]
+    ) -> Schedule:
+        """Edit a schedule. Free when the edit only makes it stricter (same or more
+        apps, locked at every minute it was locked before); otherwise needs the partner."""
+        old = next((s for s in self.schedules() if s.id == schedule_id), None)
+        if old is None:
+            raise GuardError("That schedule no longer exists.")
+        name, clean = self._clean_schedule(name, days, start_min, end_min, packages)
+        new = Schedule(old.id, name, days, start_min, end_min, tuple(clean), old.enabled)
+        looser = not is_stricter_or_equal(old, new)
+        if looser:
+            self._require(f"loosen the '{old.name}' schedule")
+        with self._tx():
+            self.conn.execute(
+                "UPDATE schedules SET name = ?, days = ?, start_min = ?, end_min = ?, packages = ?"
+                " WHERE id = ?",
+                (name, days, start_min, end_min, json.dumps(clean), schedule_id),
+            )
+            self._audit("schedule.edited", name, self._unlocked_by if looser else "none")
+            if looser:
+                self._queue("schedule_loosened", {"name": name})
+        return next(s for s in self.schedules() if s.id == schedule_id)
+
+    def add_schedule(
+        self, name: str, days: int, start_min: int, end_min: int, packages: list[str]
+    ) -> Schedule:
+        name, clean = self._clean_schedule(name, days, start_min, end_min, packages)
         with self._tx():
             cur = self.conn.execute(
                 "INSERT INTO schedules (name, days, start_min, end_min, packages, created_at)"

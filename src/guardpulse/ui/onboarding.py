@@ -68,22 +68,22 @@ class Onboarding:
         )
 
     def partner_form(self) -> None:
-        name = ft.TextField(label="Partner's name", prefix_icon=ft.Icons.PERSON_OUTLINE)
-        contact = ft.TextField(
+        name = theme.text_field(label="Partner's name", prefix_icon=ft.Icons.PERSON_OUTLINE)
+        contact = theme.text_field(
             label="Email or phone (for alerts)",
             prefix_icon=ft.Icons.ALTERNATE_EMAIL,
             keyboard_type=ft.KeyboardType.EMAIL,
         )
-        pin = ft.TextField(
+        pin = theme.text_field(
             label="Partner PIN",
             password=True,
             can_reveal_password=True,
             keyboard_type=ft.KeyboardType.NUMBER,
             max_length=security.PIN_MAX_LENGTH,
             prefix_icon=ft.Icons.KEY,
-            helper=f"{security.PIN_MIN_LENGTH}-{security.PIN_MAX_LENGTH} digits. Your partner types this - don't watch!",
+            helper=f"{security.PIN_MIN_LENGTH}-{security.PIN_MAX_LENGTH} digits, chosen by your partner",
         )
-        confirm = ft.TextField(
+        confirm = theme.text_field(
             label="Confirm PIN",
             password=True,
             keyboard_type=ft.KeyboardType.NUMBER,
@@ -121,7 +121,14 @@ class Onboarding:
                     text_align=ft.TextAlign.CENTER,
                     color=theme.MUTED,
                 ),
-                theme.card(ft.Column([name, contact, pin, confirm], spacing=12), width=380),
+                theme.card(
+                    ft.Column(
+                        [name, contact, pin, confirm],
+                        spacing=12,
+                        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,  # boxes fill the card
+                    ),
+                    width=380,
+                ),
                 ft.FilledButton("Save partner", icon=ft.Icons.CHECK, on_click=save, width=320, height=48),
                 ft.TextButton("Back", on_click=lambda _: self.show()),
             ]

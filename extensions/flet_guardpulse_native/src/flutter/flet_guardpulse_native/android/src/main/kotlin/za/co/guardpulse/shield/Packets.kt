@@ -70,6 +70,55 @@ object Packets {
         labels.joinToString(".").lowercase()
     }
 
+    /** A standalone DNS question for ``name`` (type A, recursion desired). */
+    fun query(name: String, id: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        out.write(byteArrayOf((id ushr 8).toByte(), id.toByte(), 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0))
+        for (label in name.trimEnd('.').split('.')) {
+            val bytes = label.toByteArray(Charsets.US_ASCII)
+            out.write(bytes.size)
+            out.write(bytes)
+        }
+        out.write(byteArrayOf(0, 0, 1, 0, 1)) // root, type A, class IN
+        return out.toByteArray()
+    }
+
+    /**
+     * True when a reply has at least one A record and every A record is 0.0.0.0 -
+     * how Cloudflare Family answers for a site it blocks.
+     */
+    fun allARecordsZero(reply: ByteArray): Boolean {
+        var i = questionEnd(reply) ?: return false
+        val answers = u16(reply, 6)
+        var seenA = false
+        repeat(answers) {
+            i = skipName(reply, i) ?: return false
+            if (i + 10 > reply.size) return false
+            val type = u16(reply, i)
+            val rdLen = u16(reply, i + 8)
+            val rdata = i + 10
+            if (rdata + rdLen > reply.size) return false
+            if (type == 1 && rdLen == 4) {
+                seenA = true
+                if ((0 until 4).any { reply[rdata + it].toInt() != 0 }) return false
+            }
+            i = rdata + rdLen
+        }
+        return seenA
+    }
+
+    /** Offset after a (possibly compressed) name in a DNS message. */
+    private fun skipName(msg: ByteArray, start: Int): Int? {
+        var i = start
+        while (i < msg.size) {
+            val n = msg[i].toInt() and 0xFF
+            if (n == 0) return i + 1
+            if (n and 0xC0 == 0xC0) return if (i + 2 <= msg.size) i + 2 else null // pointer ends the name
+            i += n + 1
+        }
+        return null
+    }
+
     fun nxdomain(query: ByteArray): ByteArray? = answerWithRcode(query, 3)
 
     fun servfail(query: ByteArray): ByteArray? = answerWithRcode(query, 2)

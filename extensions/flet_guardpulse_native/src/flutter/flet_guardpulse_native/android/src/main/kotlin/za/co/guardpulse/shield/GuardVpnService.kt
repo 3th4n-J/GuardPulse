@@ -11,6 +11,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.FileObserver
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.util.Log
 import java.io.File
 import java.io.FileInputStream
@@ -158,7 +159,7 @@ class GuardVpnService : VpnService() {
 
     private fun answer(q: DnsQuery, output: FileOutputStream) {
         val host = Packets.qname(q.dns)
-        val reply = if (host != null && policy.decide(host) == Decision.BLOCK) {
+        val reply = if (host != null && (policy.decide(host) == Decision.BLOCK || familyBlocksProxied(host))) {
             blocked.incrementAndGet()
             Packets.nxdomain(q.dns)
         } else {
@@ -171,6 +172,26 @@ class GuardVpnService : VpnService() {
         } catch (e: IOException) {
             // tunnel went away mid-answer
         }
+    }
+
+    /** proxied host -> (blocked by Cloudflare Family?, checked at) */
+    private val familyVerdicts = java.util.concurrent.ConcurrentHashMap<String, Pair<Boolean, Long>>()
+
+    /**
+     * Dorking protection for Google Translate proxies: our own rules are already
+     * applied by Policy.decide, but Cloudflare Family only sees "translate.goog".
+     * So ask Family about the REAL site; if it answers 0.0.0.0 (blocked), block
+     * the proxy too. Cached for 10 minutes per site.
+     */
+    private fun familyBlocksProxied(host: String): Boolean {
+        if (!policy.familyDns || !policy.flag("dork_guard")) return false
+        val inner = Policy.proxiedHost(host) ?: return false
+        val now = SystemClock.elapsedRealtime()
+        familyVerdicts[inner]?.let { (blocked, at) -> if (now - at < 10 * 60_000L) return blocked }
+        val reply = forward(Packets.query(inner, (now and 0xFFFF).toInt())) ?: return false
+        val blocked = Packets.allARecordsZero(reply)
+        familyVerdicts[inner] = blocked to now
+        return blocked
     }
 
     private fun forward(dns: ByteArray): ByteArray? {

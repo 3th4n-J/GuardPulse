@@ -238,8 +238,20 @@ class GuardAccessibilityService : AccessibilityService() {
         val root = rootInActiveWindow ?: return
         val bar = findAddressBar(root, pkg, ids) ?: return
         if (bar.isFocused) return // the user is typing, not viewing a page
-        val host = Detectors.hostFromAddressBar(bar.text)
-            ?.takeIf { Detectors.looksLikeDomain(it) } ?: return
+        val raw = bar.text?.toString() ?: return
+        val host = Detectors.hostFromAddressBar(raw)?.takeIf { Detectors.looksLikeDomain(it) }
+
+        // dorking: a search naming a blocked site ("site:reddit.com ...") - checked when
+        // the bar shows a search engine, or the search terms themselves (no host)
+        if (policy.flag("dork_guard") && (host == null || Detectors.isSearchHost(host))) {
+            val target = Detectors.domainsInQuery(Detectors.searchQuery(raw))
+                .firstOrNull { policy.decide(it) == Decision.BLOCK }
+            if (target != null) {
+                escapeSite(pkg, target, bar, title = "Search blocked", message = "Searching for $target isn't allowed.")
+                return
+            }
+        }
+        if (host == null) return
         if (policy.decide(host) == Decision.BLOCK) {
             escapeSite(pkg, host, bar)
         } else {
@@ -330,13 +342,19 @@ class GuardAccessibilityService : AccessibilityService() {
      * the address bar and press Enter (the tab no longer holds the site, so
      * reopening the browser doesn't loop), then go to the home screen.
      */
-    private fun escapeSite(pkg: String, host: String, bar: AccessibilityNodeInfo) {
+    private fun escapeSite(
+        pkg: String,
+        host: String,
+        bar: AccessibilityNodeInfo,
+        title: String = "Site blocked",
+        message: String = "$host is on your blocklist.",
+    ) {
         blockedSites.incrementAndGet()
         escapingUntil = SystemClock.elapsedRealtime() + ESCAPE_WINDOW_MS
         overlay.show(
             "site:$host",
-            "Site blocked",
-            "$host is on your blocklist. Closing it…",
+            title,
+            "$message Closing it…",
             button = null,
             focusable = false, // the browser's address bar must keep input focus
         ) {}

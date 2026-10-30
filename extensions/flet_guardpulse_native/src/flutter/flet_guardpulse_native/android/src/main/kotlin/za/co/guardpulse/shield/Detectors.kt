@@ -100,6 +100,54 @@ object Detectors {
             else hostFromAddressBar(t)?.takeIf { looksLikeDomain(it) }
         }
 
+    // --- search dorking -----------------------------------------------------------------
+
+    /** Search engines whose result pages can list (and preview) blocked sites. */
+    fun isSearchHost(host: String): Boolean {
+        val h = host.lowercase()
+        return h.startsWith("google.") || h.contains(".google.") || h == "google.com" ||
+            h == "bing.com" || h.endsWith(".bing.com") ||
+            h == "duckduckgo.com" || h.endsWith(".duckduckgo.com") ||
+            h.endsWith("search.yahoo.com") || h.startsWith("yandex.") ||
+            h == "search.brave.com" || h.endsWith("ecosia.org") || h.endsWith("startpage.com") ||
+            h.endsWith("qwant.com") || h.endsWith("presearch.com") || h.endsWith("search.aol.com")
+    }
+
+    private val QUERY_PARAMS = listOf("q", "p", "query", "text", "search")
+
+    /**
+     * The search terms behind an address bar: the ``q=`` (etc.) parameter of a
+     * results URL, or the bar text itself when the browser shows the query there.
+     */
+    fun searchQuery(barText: String): String {
+        val t = barText.trim()
+        val qs = t.substringAfter('?', "")
+        if (qs.isNotEmpty()) {
+            for (pair in qs.split('&')) {
+                val key = pair.substringBefore('=').lowercase()
+                if (key in QUERY_PARAMS) {
+                    return try {
+                        java.net.URLDecoder.decode(pair.substringAfter('=', ""), "UTF-8")
+                    } catch (e: Exception) {
+                        pair.substringAfter('=', "")
+                    }
+                }
+            }
+        }
+        return t
+    }
+
+    /** "site:", "-inurl:", "cache:" ... - but not the "https:" of a pasted link. */
+    private val SEARCH_OPERATOR = Regex("^-?[a-z]+:(?!//)", RegexOption.IGNORE_CASE)
+
+    /** Domains named in a search, operators stripped: "site:reddit.com cats" -> [reddit.com]. */
+    fun domainsInQuery(query: String): List<String> =
+        query.split(' ', '+', '\t', '\n', '|', ',')
+            .map { it.trim().trim('"', '\'', '(', ')').replace(SEARCH_OPERATOR, "") }
+            .filter { it.isNotEmpty() }
+            .mapNotNull { hostFromAddressBar(it)?.takeIf(::looksLikeDomain) }
+            .distinct()
+
     // --- browser "secure DNS" -------------------------------------------------------
 
     /** Error-page wording when a browser can't look a site up (Chromium family + Firefox). */

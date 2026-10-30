@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import flet as ft
 
 from .. import __version__
-from ..guard import FAMILY_DNS_V4, UNLOCK_MINUTES_RANGE, GuardError, Locked
+from ..guard import FAMILY_DNS_V4, UNLOCK_MINUTES_RANGE, GuardError, Locked, Schedule
 from . import theme
 from .onboarding import qr_png
 
@@ -438,7 +438,7 @@ def sites(app: App) -> list[ft.Control]:
         app.sites_kind = e.control.selected[0]
         app.render()
 
-    field = ft.TextField(
+    field = theme.text_field(
         hint_text="example.com, *.example.com or a full link",
         prefix_icon=ft.Icons.LINK,
         keyboard_type=ft.KeyboardType.URL,
@@ -559,7 +559,7 @@ def apps(app: App) -> list[ft.Control]:
     g = app.guard
     blocked = {a.package for a in g.blocked_apps()}
     _fetch_icons_then_render(app, [pkg for _, pkg in POPULAR_APPS] + sorted(blocked))
-    package = ft.TextField(
+    package = theme.text_field(
         hint_text="Package name, e.g. org.telegram.messenger",
         prefix_icon=ft.Icons.ANDROID,
         expand=True,
@@ -676,8 +676,8 @@ def schedule(app: App) -> list[ft.Control]:
     rows = g.schedules()
     out: list[ft.Control] = [
         ft.Text(
-            "Lock chosen apps during set hours - bedtime, study, work. Adding or resuming a "
-            "schedule is free; pausing or deleting one needs your partner.",
+            "Lock chosen apps during set hours - bedtime, study, work. Adding a schedule, or "
+            "editing one to be stricter, is free; loosening, pausing or deleting needs your partner.",
             size=12,
             color=theme.MUTED,
         ),
@@ -691,8 +691,16 @@ def schedule(app: App) -> list[ft.Control]:
     if not rows:
         out.append(theme.empty_state(ft.Icons.SCHEDULE, "No schedules", "Create one to lock apps on a timer."))
         return out
+    if app.native.available and not app.native.apps_tried:
+        # fetch installed-app names once so cards say "Brave", not "com.brave.browser"
+        async def load_names():
+            await app.native.load_installed_apps()
+            if app.tab == 3:
+                app.render()
+
+        app.page.run_task(load_names)
     now = dt.datetime.now()
-    labels = {pkg: name for name, pkg in POPULAR_APPS} | {a.package: a.label for a in g.blocked_apps()}
+    labels = _app_labels(app)
     for s in rows:
         days = ", ".join(DAYS[i] for i in range(7) if s.days >> i & 1)
         if s.days == 0b1111111:
@@ -733,6 +741,14 @@ def schedule(app: App) -> list[ft.Control]:
                                     color=theme.MUTED,
                                     expand=True,
                                 ),
+                                ft.IconButton(
+                                    icon=ft.Icons.EDIT_OUTLINED,
+                                    icon_color=theme.CYAN,
+                                    tooltip="Edit",
+                                    on_click=lambda _, sched=s: _open_after_loading_apps(
+                                        app, lambda a: _schedule_dialog(a, sched)
+                                    ),
+                                ),
                                 _remove_button(
                                     app,
                                     "Delete",
@@ -749,14 +765,34 @@ def schedule(app: App) -> list[ft.Control]:
     return out
 
 
-def _schedule_dialog(app: App) -> None:
+def _app_labels(app: App) -> dict[str, str]:
+    """package -> friendly name: popular apps, this phone's installed apps, blocked apps."""
+    return (
+        {pkg: name for name, pkg in POPULAR_APPS}
+        | {a["package"]: a["label"] for a in app.native.installed_apps}
+        | {a.package: a.label for a in app.guard.blocked_apps()}
+    )
+
+
+def _schedule_dialog(app: App, existing: Schedule | None = None) -> None:
+    """New schedule, or edit ``existing`` (stricter edits free, looser ones need the partner)."""
     g = app.guard
-    state = {"days": 0b0011111, "start": 22 * 60, "end": 6 * 60, "apps": set()}
-    name = ft.TextField(label="Name", value="Bedtime", prefix_icon=ft.Icons.LABEL_OUTLINE)
+    if existing is None:
+        state = {"days": 0b0011111, "start": 22 * 60, "end": 6 * 60, "apps": set()}
+    else:
+        state = {
+            "days": existing.days,
+            "start": existing.start_min,
+            "end": existing.end_min,
+            "apps": set(existing.packages),
+        }
+    name = theme.text_field(
+        label="Name", value=existing.name if existing else "Bedtime", prefix_icon=ft.Icons.LABEL_OUTLINE
+    )
     start_btn = ft.OutlinedButton(_hhmm(state["start"]), icon=ft.Icons.NIGHTLIGHT_OUTLINED)
     end_btn = ft.OutlinedButton(_hhmm(state["end"]), icon=ft.Icons.WB_SUNNY_OUTLINED)
     day_row = ft.Row(wrap=True, spacing=6, run_spacing=6)
-    custom = ft.TextField(hint_text="Other package name", dense=True)
+    custom = theme.text_field(hint_text="Other package name", dense=True)
     error = ft.Text("", color=theme.DANGER, size=12, visible=False)
 
     def draw_days():
@@ -801,12 +837,24 @@ def _schedule_dialog(app: App) -> None:
         | {a["package"]: a["label"] for a in app.native.installed_apps}
         | {a.package: a.label for a in g.blocked_apps()}
     )
+    # an edited schedule's apps must stay visible (and ticked) even if not installed any more
+    choices = {p: _app_labels(app).get(p, p) for p in state["apps"]} | choices
     search, checklist = _app_checklist(choices, state["apps"], lambda p, l: _app_icon(app, p, l, 24))
 
     def save(_):
         apps_ = set(state["apps"])
         if custom.value and custom.value.strip():
             apps_.add(custom.value.strip())
+        if existing is not None:
+            # may need the partner: close first, then app.act asks for the PIN and retries
+            app.close_dialog()
+            app.act(
+                lambda: g.update_schedule(
+                    existing.id, name.value, state["days"], state["start"], state["end"], sorted(apps_)
+                ),
+                "Schedule saved",
+            )
+            return
         try:
             g.add_schedule(name.value, state["days"], state["start"], state["end"], sorted(apps_))
         except (GuardError, ValueError) as exc:
@@ -820,7 +868,7 @@ def _schedule_dialog(app: App) -> None:
     draw_days()
     app.open_dialog(
         ft.AlertDialog(
-            title=ft.Text("New schedule"),
+            title=ft.Text("Edit schedule" if existing else "New schedule"),
             scrollable=True,
             content=ft.Column(
                 [
@@ -886,7 +934,7 @@ def _app_checklist(
             row.visible = needle in row.data
         column.update()
 
-    search = ft.TextField(
+    search = theme.text_field(
         hint_text=f"Search {len(rows)} apps",
         prefix_icon=ft.Icons.SEARCH,
         dense=True,
@@ -899,8 +947,14 @@ def _open_after_loading_apps(app: App, opener) -> None:
     """Fetch the installed-app list (Android) before showing a picker."""
 
     async def run():
-        await app.native.load_installed_apps()
-        opener(app)
+        try:
+            await app.native.load_installed_apps()
+            opener(app)
+        except Exception:  # noqa: BLE001 - Flet drops errors raised inside run_task silently
+            import traceback
+
+            traceback.print_exc()
+            app.toast("Couldn't open that - please try again.", error=True)
 
     app.page.run_task(run)
 
@@ -980,6 +1034,13 @@ def settings(app: App) -> list[ft.Control]:
                 [
                     flag("family_dns", "Cloudflare Family DNS", "Filter adult content + malware for every app", ft.Icons.DNS_OUTLINED),
                     flag("browser_overlay", "Security overlay", "Cover blocked sites in any browser", ft.Icons.LAYERS_OUTLINED),
+                    flag(
+                        "dork_guard",
+                        "Search & proxy protection",
+                        "Block searches for blocked sites (site:, cache: ...), Google Translate "
+                        "proxies, search caches and web archives",
+                        ft.Icons.TRAVEL_EXPLORE,
+                    ),
                     flag(
                         "settings_guard",
                         "Guard Settings pages",
@@ -1233,8 +1294,8 @@ def _require_unlocked(app: App, action: str) -> None:
 
 def _pin_dialog(app: App) -> None:
     _require_unlocked(app, "change the PIN")
-    new = ft.TextField(label="New PIN", password=True, keyboard_type=ft.KeyboardType.NUMBER, max_length=12)
-    again = ft.TextField(label="Confirm", password=True, keyboard_type=ft.KeyboardType.NUMBER, max_length=12)
+    new = theme.text_field(label="New PIN", password=True, keyboard_type=ft.KeyboardType.NUMBER, max_length=12)
+    again = theme.text_field(label="Confirm", password=True, keyboard_type=ft.KeyboardType.NUMBER, max_length=12)
 
     def save(_):
         if new.value != again.value:
@@ -1266,8 +1327,8 @@ def _pin_dialog(app: App) -> None:
 def _partner_dialog(app: App) -> None:
     _require_unlocked(app, "change the partner details")
     partner = app.guard.partner()
-    name = ft.TextField(label="Name", value=partner.name)
-    contact = ft.TextField(label="Email or phone", value=partner.contact)
+    name = theme.text_field(label="Name", value=partner.name)
+    contact = theme.text_field(label="Email or phone", value=partner.contact)
 
     def save(_):
         try:
