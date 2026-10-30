@@ -43,6 +43,7 @@ class App:
         page = self.page
         page.title = "GuardPulse"
         theme.apply(page)
+        page.on_resize = self._on_resize
         previous = self.guard.note_app_version(__version__)
         self.guard.ensure_alert_topic()  # partners set up before alerts existed get a topic now
         if not self.guard.is_setup and not self.guard.history(1):
@@ -189,6 +190,13 @@ class App:
         )
         self.body.padding = ft.Padding.symmetric(horizontal=16, vertical=12)
         self.page.update()
+
+    def _on_resize(self, e) -> None:
+        """Rotation / split screen: re-fit button and hint text to the new width."""
+        if theme.fit_to(e.width):
+            theme.apply(self.page, e.width)
+            if self.tab is not None and self.body.content is not None:
+                self.render()
 
     def _on_tab(self, e: ft.Event) -> None:
         self.tab = e.control.selected_index
