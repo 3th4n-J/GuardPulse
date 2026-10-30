@@ -24,15 +24,48 @@ BRAND_TEAL = "#23C6C0"
 RADIUS = 14  # corners for inputs and buttons
 
 
+# --- text that has to fit: buttons, segments, field hints -----------------------------
+# Phones narrower than REFERENCE_WIDTH (and big system font settings) shrink these a
+# little instead of wrapping "Blacklist" onto two lines. Set from the page width by
+# apply() and again on every resize.
+REFERENCE_WIDTH = 430
+MIN_SCALE = 0.78
+BUTTON_TEXT = 14
+HINT_TEXT = 15
+scale = 1.0
+compact = False  # narrow screen: segmented buttons drop their icons
+
+
+def fit_to(width: float | None) -> bool:
+    """Update ``scale``/``compact`` for a page this wide; True if anything changed."""
+    global scale, compact
+    new_scale = 1.0 if not width else max(MIN_SCALE, min(1.0, width / REFERENCE_WIDTH))
+    new_compact = bool(width) and width < 480
+    changed = (round(new_scale, 2), new_compact) != (round(scale, 2), compact)
+    scale, compact = new_scale, new_compact
+    return changed
+
+
+def sized(base: float) -> float:
+    return round(base * scale, 1)
+
+
+def segment_label(text: str) -> ft.Text:
+    """Segment text that shrinks to fit and never wraps."""
+    return ft.Text(text, size=sized(BUTTON_TEXT), no_wrap=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+
+
 def _states(selected: str, default: str) -> dict:
     return {ft.ControlState.SELECTED: selected, ft.ControlState.DEFAULT: default}
 
 
-def apply(page: ft.Page) -> None:
+def apply(page: ft.Page, width: float | None = None) -> None:
     """One theme for every control, so no Material default colours show through."""
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = NAVY
+    fit_to(width or page.width)
     rounded = ft.RoundedRectangleBorder(radius=RADIUS)
+    button_text = ft.TextStyle(size=sized(BUTTON_TEXT), weight=ft.FontWeight.W_600)
     page.dark_theme = ft.Theme(
         use_material3=True,
         color_scheme=ft.ColorScheme(
@@ -67,7 +100,7 @@ def apply(page: ft.Page) -> None:
         divider_color=OUTLINE,
         hint_color=MUTED,
         filled_button_theme=ft.FilledButtonTheme(
-            style=ft.ButtonStyle(bgcolor=CYAN, color=NAVY, shape=rounded, icon_color=NAVY)
+            style=ft.ButtonStyle(bgcolor=CYAN, color=NAVY, shape=rounded, icon_color=NAVY, text_style=button_text)
         ),
         outlined_button_theme=ft.OutlinedButtonTheme(
             style=ft.ButtonStyle(
@@ -75,9 +108,12 @@ def apply(page: ft.Page) -> None:
                 icon_color=CYAN,
                 side=ft.BorderSide(1, EDGE),
                 shape=rounded,
+                text_style=button_text,
             )
         ),
-        text_button_theme=ft.TextButtonTheme(style=ft.ButtonStyle(color=CYAN, icon_color=CYAN, shape=rounded)),
+        text_button_theme=ft.TextButtonTheme(
+            style=ft.ButtonStyle(color=CYAN, icon_color=CYAN, shape=rounded, text_style=button_text)
+        ),
         segmented_button_theme=ft.SegmentedButtonTheme(
             style=ft.ButtonStyle(
                 bgcolor=_states(ft.Colors.with_opacity(0.22, CYAN), FIELD),
@@ -85,6 +121,8 @@ def apply(page: ft.Page) -> None:
                 icon_color=_states(CYAN, MUTED),
                 side=ft.BorderSide(1, EDGE),
                 shape=rounded,
+                text_style=button_text,
+                padding=ft.Padding.symmetric(horizontal=8),
             )
         ),
         chip_theme=ft.ChipTheme(
@@ -158,8 +196,10 @@ def text_field(**kwargs) -> ft.TextField:
         fill_color=FIELD,
         color=TEXT,
         cursor_color=CYAN,
-        label_style=ft.TextStyle(color=MUTED),
-        hint_style=ft.TextStyle(color=MUTED),
+        label_style=ft.TextStyle(color=MUTED, size=sized(HINT_TEXT)),
+        hint_style=ft.TextStyle(color=MUTED, size=sized(HINT_TEXT)),
+        hint_max_lines=1,
+        text_size=sized(HINT_TEXT + 1),
         content_padding=ft.Padding.symmetric(horizontal=14, vertical=14),
     )
     style.update(kwargs)

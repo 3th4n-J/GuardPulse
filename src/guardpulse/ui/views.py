@@ -466,8 +466,7 @@ def sites(app: App) -> list[ft.Control]:
         app.render()
 
     field = theme.text_field(
-        hint_text="A word or phrase, e.g. casino" if kind == "keyword"
-        else "example.com, *.example.com or a full link",
+        hint_text="e.g. casino" if kind == "keyword" else "example.com or a link",
         prefix_icon=ft.Icons.MANAGE_SEARCH if kind == "keyword" else ft.Icons.LINK,
         keyboard_type=ft.KeyboardType.TEXT if kind == "keyword" else ft.KeyboardType.URL,
         expand=True,
@@ -488,15 +487,27 @@ def sites(app: App) -> list[ft.Control]:
     rules = g.rules(kind)
 
     out: list[ft.Control] = [
-        ft.SegmentedButton(
-            selected=[kind],
-            segments=[
-                ft.Segment(value="block", label=ft.Text("Blacklist"), icon=ft.Icon(ft.Icons.BLOCK)),
-                ft.Segment(value="allow", label=ft.Text("Whitelist"), icon=ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE)),
-                ft.Segment(value="keyword", label=ft.Text("Keywords"), icon=ft.Icon(ft.Icons.MANAGE_SEARCH)),
-            ],
-            show_selected_icon=False,
-            on_change=switch_kind,
+        ft.Row(  # full width, three equal segments
+            [
+                ft.SegmentedButton(
+                    selected=[kind],
+                    segments=[
+                        ft.Segment(
+                            value=value,
+                            label=theme.segment_label(text),
+                            icon=None if theme.compact else ft.Icon(icon),
+                        )
+                        for value, text, icon in (
+                            ("block", "Blacklist", ft.Icons.BLOCK),
+                            ("allow", "Whitelist", ft.Icons.CHECK_CIRCLE_OUTLINE),
+                            ("keyword", "Keywords", ft.Icons.MANAGE_SEARCH),
+                        )
+                    ],
+                    show_selected_icon=False,
+                    expand=True,
+                    on_change=switch_kind,
+                ),
+            ]
         ),
         ft.Text(SITE_HELP[kind], size=12, color=theme.MUTED),
         theme.card(
@@ -586,7 +597,7 @@ def apps(app: App) -> list[ft.Control]:
     blocked = {a.package for a in g.blocked_apps()}
     _fetch_icons_then_render(app, [pkg for _, pkg in POPULAR_APPS] + sorted(blocked))
     package = theme.text_field(
-        hint_text="Package name, e.g. org.telegram.messenger",
+        hint_text="Package name",
         prefix_icon=ft.Icons.ANDROID,
         expand=True,
         autocorrect=False,
@@ -1253,10 +1264,10 @@ def settings(app: App) -> list[ft.Control]:
 
 
 def _section(app: App, key: str, title: str, icon: ft.IconData, body: list[ft.Control]) -> list[ft.Control]:
-    """A Settings section that folds away; only Protection starts open. Remembered while the app runs."""
+    """A Settings section that folds away; all start closed. Remembered while the app runs."""
     opened = getattr(app, "open_sections", None)
     if opened is None:
-        opened = app.open_sections = {"protection"}
+        opened = app.open_sections = set()
     is_open = key in opened
     chevron = ft.Icon(ft.Icons.EXPAND_LESS if is_open else ft.Icons.EXPAND_MORE, color=theme.MUTED)
     for control in body:

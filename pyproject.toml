@@ -1,6 +1,6 @@
 [project]
 name = "guardpulse"
-version = "1.0.0"
+version = "1.0.1"
 description = "A completely free content blocker with accountability controls"
 readme = "README.md"
 requires-python = ">=3.12"
