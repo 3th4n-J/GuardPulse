@@ -191,6 +191,85 @@ class Guard:
         self._audit("data.snapshot", label)
         return path
 
+    # --- sync (Phase 6) ------------------------------------------------------
+
+    @property
+    def device_id(self) -> str:
+        """Random id for this install, used to label synced activity."""
+        value = self.meta("device_id")
+        if not value:
+            value = secrets.token_hex(6)
+            self.set_meta("device_id", value)
+        return value
+
+    def _touch_partner(self) -> None:
+        """Stamp partner changes so two phones' edits can be ordered when merging."""
+        self.set_meta("partner_changed_at", repr(self.clock()))
+
+    def apply_synced(self, state: dict) -> None:
+        """Make protected state match a merged sync snapshot.
+
+        No ratchet check here: every loosening in ``state`` was approved with the
+        partner PIN on the phone that made it, and the snapshot is end-to-end
+        encrypted + authenticated with a key only paired phones hold.
+        """
+        partner = state.get("partner")
+        with self._tx():
+            self.conn.execute("DELETE FROM rules")
+            self.conn.executemany(
+                "INSERT INTO rules (kind, value, created_at) VALUES (?, ?, ?)",
+                [(kind, value, self.clock()) for kind, value in state.get("rules", [])],
+            )
+            self.conn.execute("DELETE FROM apps")
+            self.conn.executemany(
+                "INSERT INTO apps (package, label, created_at) VALUES (?, ?, ?)",
+                [(pkg, label, self.clock()) for pkg, label in state.get("apps", [])],
+            )
+            self.conn.execute("DELETE FROM schedules")
+            self.conn.executemany(
+                "INSERT INTO schedules (name, days, start_min, end_min, packages, enabled, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (s["name"], s["days"], s["start_min"], s["end_min"], json.dumps(s["packages"]),
+                     int(s["enabled"]), self.clock())
+                    for s in state.get("schedules", [])
+                ],
+            )
+            for key, value in state.get("settings", {}).items():
+                if key in DEFAULT_SETTINGS:
+                    self._write_setting(key, value)
+            if partner:
+                self.conn.execute(
+                    "INSERT INTO partner (id, name, contact, pin_hash, totp_secret, totp_last_counter, created_at)"
+                    " VALUES (1, ?, ?, ?, ?, ?, ?)"
+                    " ON CONFLICT (id) DO UPDATE SET name = excluded.name, contact = excluded.contact,"
+                    " pin_hash = excluded.pin_hash, totp_secret = excluded.totp_secret,"
+                    " totp_last_counter = MAX(partner.totp_last_counter, excluded.totp_last_counter)",
+                    (partner["name"], partner["contact"], partner["pin_hash"], partner["totp_secret"],
+                     int(partner.get("totp_last_counter", 0)), self.clock()),
+                )
+                self.set_meta("partner_changed_at", repr(float(partner.get("changed_at", 0))))
+                if partner.get("pin_verify"):  # re-sign the offline PIN hash with THIS phone's key
+                    payload = partner["pin_verify"].encode()
+                    (self.folder / "pin.verify").write_bytes(payload)
+                    (self.folder / "pin.verify.sig").write_text(security.seal(self.keys.get_key(), payload))
+            self._audit("sync.applied", f"{len(state.get('rules', []))} rules, {len(state.get('apps', []))} apps")
+
+    def import_activity(self, entries: list[dict]) -> int:
+        """Add other phones' activity (by unique key); returns how many were new."""
+        own = self.device_id  # read first: creating it is a write that mustn't be counted
+        before = self.conn.total_changes
+        self.conn.executemany(
+            "INSERT OR IGNORE INTO remote_activity (key, device, at, action, detail, authorised_by)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (e["key"], e["device"], float(e["at"]), e["action"], e.get("detail", ""), e.get("by", "none"))
+                for e in entries
+                if e.get("device") != own
+            ],
+        )
+        return self.conn.total_changes - before
+
     def meta(self, key: str) -> str | None:
         row = self.conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
         return row["value"] if row else None
@@ -233,6 +312,7 @@ class Guard:
             self._write_native_auth(pin)
             if not self.setting("ntfy_topic"):
                 self._write_setting("ntfy_topic", new_alert_topic())
+            self._touch_partner()
             self._audit("partner.setup", name, "setup")
         return secret
 
@@ -314,6 +394,7 @@ class Guard:
         with self._tx():
             self.conn.execute("UPDATE partner SET pin_hash = ?", (security.hash_pin(new_pin),))
             self._write_native_auth(new_pin)
+            self._touch_partner()
             self._audit("partner.pin_changed", "", self._unlocked_by)
             self._queue("pin_changed", {})
 
@@ -324,6 +405,7 @@ class Guard:
             self.conn.execute(
                 "UPDATE partner SET totp_secret = ?, totp_last_counter = 0", (secret,)
             )
+            self._touch_partner()
             self._audit("partner.totp_reset", "", self._unlocked_by)
         return secret
 
@@ -336,6 +418,7 @@ class Guard:
             self.conn.execute(
                 "UPDATE partner SET name = ?, contact = ?", (name, (contact or "").strip())
             )
+            self._touch_partner()
             self._audit("partner.updated", name, self._unlocked_by)
 
     # --- websites ----------------------------------------------------------
@@ -683,8 +766,12 @@ class Guard:
         self._audit(action, detail)
 
     def history(self, limit: int = 100) -> list[sqlite3.Row]:
+        """This phone's activity plus what synced in from the account's other phones."""
         return self.conn.execute(
-            "SELECT at, action, detail, authorised_by FROM audit ORDER BY at DESC, id DESC LIMIT ?",
+            "SELECT at, action, detail, authorised_by, '' AS device, id AS seq FROM audit"
+            " UNION ALL"
+            " SELECT at, action, detail, authorised_by, device, 0 AS seq FROM remote_activity"
+            " ORDER BY at DESC, seq DESC LIMIT ?",  # seq: newest local entry first on equal times
             (limit,),
         ).fetchall()
 

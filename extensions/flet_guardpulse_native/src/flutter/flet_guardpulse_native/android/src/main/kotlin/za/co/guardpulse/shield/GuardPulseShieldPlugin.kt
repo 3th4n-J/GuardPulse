@@ -108,6 +108,27 @@ class GuardPulseShieldPlugin :
                 if (!server.isNullOrBlank() && !topic.isNullOrBlank()) Store.setAlertTarget(context, server, topic)
                 background(result) { Alerts.flush(context) }
             }
+            "google_sign_in" -> {
+                val activity = binding?.activity
+                val clientId = call.argument<String>("web_client_id")
+                if (activity == null || clientId.isNullOrBlank()) {
+                    result.error("bad_args", "needs the app in front and a web client id", null)
+                    return
+                }
+                GoogleSync.signIn(activity, clientId) { token, error ->
+                    if (error != null) result.error("sign_in_failed", error, null) else result.success(token)
+                }
+            }
+            "scan_qr" -> {
+                val activity = binding?.activity
+                if (activity == null) {
+                    result.error("no_activity", "GuardPulse must be in the foreground", null)
+                    return
+                }
+                GoogleSync.scanQr(activity) { text, error ->
+                    if (error != null) result.error("scan_failed", error, null) else result.success(text)
+                }
+            }
             "device_admin_active" -> result.success(isAdminActive())
             "request_device_admin" -> {
                 Store.setAdminWanted(context, true)

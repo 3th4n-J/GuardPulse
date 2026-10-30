@@ -89,6 +89,16 @@ class GuardNative(ft.Service):
         """Retry the native tamper-alert queue; returns how many are still waiting."""
         return int(await self._invoke_method("flush_alerts", {"server": server, "topic": topic}, timeout=60) or 0)
 
+    async def google_sign_in(self, web_client_id: str) -> str | None:
+        """Android's "Sign in with Google" sheet. Returns a Google ID token, or None if cancelled."""
+        result = await self._invoke_method("google_sign_in", {"web_client_id": web_client_id}, timeout=180)
+        return str(result) if result else None
+
+    async def scan_qr(self) -> str | None:
+        """Google's built-in QR scanner. Returns the text, or None if closed."""
+        result = await self._invoke_method("scan_qr", {}, timeout=180)
+        return str(result) if result else None
+
     async def device_admin_active(self) -> bool:
         return bool(await self._invoke_method("device_admin_active", {}))
 

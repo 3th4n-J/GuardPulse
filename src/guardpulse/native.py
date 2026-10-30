@@ -246,6 +246,17 @@ class NativeBridge:
             except Exception:  # noqa: BLE001 - retried on the next poll
                 pass
 
+    async def google_sign_in(self, web_client_id: str) -> str | None:
+        """Google ID token from Android's sign-in sheet (None = cancelled). Raises on errors."""
+        if not self.service:
+            raise RuntimeError("Signing in with Google works in the Android app.")
+        return await self.service.google_sign_in(web_client_id)
+
+    async def scan_qr(self) -> str | None:
+        if not self.service:
+            raise RuntimeError("Scanning works in the Android app - type the code instead.")
+        return await self.service.scan_qr()
+
     async def enable_uninstall_protection(self) -> bool:
         if not self.service:
             return False

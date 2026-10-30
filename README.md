@@ -11,7 +11,7 @@ Block sites and apps, filter adult content with Cloudflare Family DNS, and put s
 ![Python](https://img.shields.io/badge/Python-3.12-14B8A6?style=for-the-badge&logo=python&logoColor=white)
 ![Android](https://img.shields.io/badge/Android-only-34D399?style=for-the-badge&logo=android&logoColor=white)
 ![Price](https://img.shields.io/badge/Price-free%20forever-06122B?style=for-the-badge)
-![Status](https://img.shields.io/badge/status-phase%205%20of%206-FBBF24?style=for-the-badge)
+![Status](https://img.shields.io/badge/status-phase%206%20of%206-FBBF24?style=for-the-badge)
 
 [Features](#-features) · [How it works](#-how-it-works) · [Roadmap](#-roadmap) · [Getting started](#-getting-started) · [Security model](#-security-model) · [FAQ](#-faq)
 
@@ -151,6 +151,27 @@ When your partner is set up, GuardPulse creates a private, unguessable alert cha
 
 Alerts wait in a queue until ntfy accepts them, so being offline only delays them. **Settings → Partner alerts** has a *Send test alert* button and the partner's subscribe QR (which needs the partner PIN). If the link ever leaks, the partner can make a new one there.
 
+### Sync across phones (phase 6)
+
+Sign in with Google on each phone and they keep the same rules, blocked apps, schedules, settings, partner + PIN + authenticator, alert channel and activity log.
+
+- **End-to-end encrypted.** Everything is sealed on the phone with AES-256-GCM using a random key that only your phones hold. Firebase stores one unreadable blob per account; even the project owner can't read it, and an edited blob fails to open.
+- **Adding a phone.** On a synced phone: **Settings → Sync → Add another phone** (needs the partner PIN), which shows a QR code. On the new phone: sign in with the same Google account and tap **Scan QR**. The QR holds the key, so it's only ever shown on screen.
+- **Merging is fail-safe.** Changes from both phones are combined. A removal only syncs if it was approved with the PIN on the phone where it happened, and when both phones changed the same setting, the **stricter** value wins.
+- **Free.** Only Firebase Authentication and Firestore on the Spark plan are used. No Cloud Functions, no billing account.
+- Turning sync off on a phone needs the partner PIN.
+
+#### One-time Firebase setup (about 10 minutes)
+
+1. Open the [Firebase console](https://console.firebase.google.com) → **Add project** → name it `GuardPulse` (Analytics can stay off). It starts on the free Spark plan.
+2. **Add app → Android**: package name `za.co.guardpulse.guardpulse`, SHA-1 `B0:FE:4A:EC:DA:AB:D1:62:1C:57:07:13:9E:EA:8A:BB:76:55:CB:78` (your release key). You can skip downloading `google-services.json`, because the app doesn't use the Firebase SDK. Then in **Project settings → Your apps → Add fingerprint**, also add SHA-256 `6A:BA:3B:6C:14:D4:F1:9C:93:73:EC:67:23:20:CE:67:24:49:9A:94:E3:4A:7A:D4:89:D1:B3:F0:8B:0E:6D:B8`.
+3. **Build → Authentication → Get started → Sign-in method → Google → Enable**, pick a support email and save. Open the Google provider again and copy the **Web client ID** under *Web SDK configuration*.
+4. **Build → Firestore Database → Create database → Production mode** (location: `africa-south1` Johannesburg, or the nearest one). On the **Rules** tab, paste [`firebase/firestore.rules`](firebase/firestore.rules) and **Publish**.
+5. **Project settings → General**: copy the **Web API key** and **Project ID**.
+6. Put the three values in [`src/guardpulse/firebase.json`](src/guardpulse/firebase.json). They identify the project and aren't secrets; the Firestore rules are what protect the data. Then build a release APK.
+
+> Google sign-in only works in APKs signed with the key registered in step 2, i.e. `build-release.ps1` builds. Debug builds can't sign in unless you add their SHA-1 too.
+
 ## 🗺️ Roadmap
 
 - [x] **Phase 1: Core app.** Flet 1.0.5 UI, SQLite with an HMAC seal, partner PIN (scrypt) and TOTP codes, the one-way ratchet, schedules, activity log, signed policy export
@@ -160,7 +181,7 @@ Alerts wait in a queue until ntfy accepts them, so being offline only delays the
 - [x] **Phase 4: Uninstall + settings protection.** Device Admin blocks uninstalling GuardPulse, and the overlay covers Android's Settings/installer screens that act on GuardPulse (uninstall, force stop, clear storage, deactivate device admin, disable) with a partner-PIN prompt. The native layer verifies the PIN offline (PBKDF2, from an HMAC-sealed file) so it works while the app is closed. Switching either off outside the app raises a tamper alert.
 - [x] **Phase 5: Partner alerts.** Free push alerts to the partner's phone through [ntfy](https://ntfy.sh): no account, no server, no password stored on the phone. Tamper alerts are sent straight from the Android layer the moment they happen, and everything is queued and retried while offline. The site overlay also now works in **any** browser.
 - [ ] **Later (optional): "phone went quiet" alert.** Nothing on the phone can report its own uninstall or factory reset. A free [Healthchecks.io](https://healthchecks.io) heartbeat could notice the silence and tell the partner.
-- [ ] **Phase 6: Google sign-in + sync.** Sign in with Google to keep rules, partner/PIN and activity in sync across devices. Uses Firebase's free Spark plan, end-to-end encrypted with a key that never leaves your devices. New devices pair by QR code, and showing that code needs the partner PIN.
+- [x] **Phase 6: Google sign-in + sync.** Sign in with Google to keep rules, schedules, partner/PIN and activity the same on every phone. Firebase's free Spark plan, end-to-end encrypted (AES-256-GCM) with a key that never leaves your phones. New phones pair by QR code, and showing that code needs the partner PIN. Needs the one-time Firebase setup below.
 
 ## 🚀 Getting started
 

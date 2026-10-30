@@ -62,6 +62,11 @@ ACTION_LABELS = {
     "filter.disabled": ("DNS filter off", ft.Icons.POWER_SETTINGS_NEW),
     "overlay.setup_opened": ("Overlay setup opened", ft.Icons.LAYERS_OUTLINED),
     "native.secure_dns_tip": ("Browser secure-DNS tip shown", ft.Icons.DNS_OUTLINED),
+    "sync.signed_in": ("Signed in for sync", ft.Icons.LOGIN),
+    "sync.paired": ("Phone paired for sync", ft.Icons.PHONELINK),
+    "sync.pair_code_shown": ("Pairing code shown", ft.Icons.QR_CODE_2),
+    "sync.applied": ("Synced from another phone", ft.Icons.SYNC),
+    "sync.signed_out": ("Sync turned off", ft.Icons.SYNC_DISABLED),
     "alerts.topic_created": ("Partner alerts set up", ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED),
     "alerts.topic_changed": ("Partner alert link changed", ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED),
     "alerts.test": ("Test alert sent", ft.Icons.SEND),
@@ -108,11 +113,13 @@ def _activity_tile(row) -> ft.Control:
     by = {"pin": "PIN", "totp": "Code", "setup": "Setup"}.get(row["authorised_by"])
     danger = row["action"].startswith(("tamper.detected", "unlock.failed"))
     trailing = theme.pill(by, theme.AMBER, ft.Icons.KEY) if by else None
+    other_phone = "device" in row.keys() and row["device"]  # synced in from another phone
+    parts = (["Other phone"] if other_phone else []) + ([row["detail"]] if row["detail"] else []) + [_when(row["at"])]
     return ft.ListTile(
         leading=ft.Icon(icon, color=theme.DANGER if danger else theme.CYAN),
         title=ft.Text(label, color=theme.TEXT, weight=ft.FontWeight.W_600),
         subtitle=ft.Text(
-            f"{row['detail']}  ·  {_when(row['at'])}" if row["detail"] else _when(row["at"]),
+            "  ·  ".join(parts),
             color=theme.MUTED,
             size=12,
         ),
@@ -1112,6 +1119,7 @@ def settings(app: App) -> list[ft.Control]:
         )
 
     out += [theme.section_title("Partner alerts", ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED), _alerts_card(app)]
+    out += [theme.section_title("Sync across phones", ft.Icons.SYNC), _sync_card(app)]
     out += [theme.section_title("Activity log", ft.Icons.HISTORY)]
     rows = g.history(30)
     out.append(
@@ -1234,6 +1242,56 @@ def _alerts_card(app: App) -> ft.Control:
                         on_click=lambda _: app.act(lambda: _ntfy_dialog(app)),
                     ),
                     ft.OutlinedButton("Send test alert", icon=ft.Icons.SEND, on_click=lambda _: app.send_test_alert()),
+                ],
+                wrap=True,
+            ),
+        ]
+    return theme.card(ft.Column(body, spacing=10), padding=14)
+
+
+def _sync_card(app: App) -> ft.Control:
+    st = app.sync.status()
+    intro = ft.Text(
+        "Keep rules, schedules, your partner + PIN and activity the same on all your phones. "
+        "Encrypted on the phone with a key the cloud never sees.",
+        size=12,
+        color=theme.MUTED,
+    )
+    if not st.configured:
+        body = [intro, ft.Text("Sync isn't set up in this build yet.", size=12, color=theme.AMBER)]
+    elif not st.signed_in:
+        body = [
+            intro,
+            ft.FilledButton(
+                "Sign in with Google",
+                icon=ft.Icons.LOGIN,
+                on_click=lambda _: app.sync_sign_in(),
+                disabled=not app.native.available,
+            ),
+        ]
+    elif not st.paired:
+        body = [
+            ft.Text(f"Signed in as {st.email}", size=13, color=theme.TEXT),
+            ft.Text("This phone still needs pairing with your synced phone.", size=12, color=theme.AMBER),
+            ft.FilledButton("Pair this phone", icon=ft.Icons.QR_CODE_SCANNER, on_click=lambda _: app.show_pair_dialog()),
+        ]
+    else:
+        when = _when(st.last_sync) if st.last_sync else "not yet"
+        body = [
+            ft.Row(
+                [
+                    ft.Icon(ft.Icons.CLOUD_DONE_OUTLINED if not st.last_error else ft.Icons.CLOUD_OFF_OUTLINED,
+                            color=theme.PULSE if not st.last_error else theme.AMBER, size=18),
+                    ft.Text(f"{st.email}  ·  last sync {when}", size=12, color=theme.MUTED, expand=True),
+                ],
+                spacing=6,
+            ),
+            *([ft.Text(st.last_error, size=12, color=theme.DANGER)] if st.last_error else []),
+            ft.Row(
+                [
+                    ft.OutlinedButton("Sync now", icon=ft.Icons.SYNC, on_click=lambda _: app.page.run_task(app.run_sync)),
+                    ft.OutlinedButton("Add another phone", icon=ft.Icons.QR_CODE_2, on_click=lambda _: app.show_pairing_qr()),
+                    ft.TextButton("Turn off", on_click=lambda _: app.sync_sign_out()),
                 ],
                 wrap=True,
             ),

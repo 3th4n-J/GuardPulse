@@ -11,6 +11,7 @@ import flet as ft
 from .. import __version__, alerts, updates
 from ..guard import Guard, GuardError, Locked
 from ..native import NativeBridge
+from ..sync.manager import SyncError, SyncManager
 from . import theme, views
 from .onboarding import Onboarding
 
@@ -33,6 +34,8 @@ class App:
         self.lock_chip = ft.Container()
         self._dialogs: list[ft.DialogControl] = []
         self.update: updates.Release | None = None  # newer release, once found
+        self.sync = SyncManager(self.guard)
+        self._sync_due = 0.0  # when a change should be pushed to the account's other phones
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -211,7 +214,145 @@ class App:
             self.page.run_task(self.native.reload_policy)
         if self.guard.pending_alerts():
             self.page.run_task(self.deliver_alerts)  # tell the partner straight away
+        if self.sync.status().paired:
+            self._sync_due = time.time() + 10  # batch quick edits, then push to the other phones
         self.render()
+
+    # --- sync across phones (Phase 6) ------------------------------------------
+
+    async def run_sync(self, quiet: bool = False) -> None:
+        """Pull + merge + push. Quiet = background run (errors only show on the card)."""
+        try:
+            changed = await self.sync.sync_now_async()
+        except (SyncError, OSError) as exc:
+            if not quiet:
+                self.toast(str(exc), error=True)
+            self.render()
+            return
+        if changed:
+            await self.native.reload_policy()
+            self.toast("Updated from your other phone")
+        elif not quiet:
+            self.toast("Synced")
+        self.render()
+
+    def sync_sign_in(self) -> None:
+        async def run():
+            try:
+                token = await self.native.google_sign_in(self.sync.config.web_client_id)
+                if token is None:
+                    return  # closed the Google sheet
+                self.toast("Signing in…")
+                outcome = await self.sync.sign_in_async(token)
+            except (SyncError, RuntimeError, OSError) as exc:
+                self.toast(str(exc), error=True)
+                return
+            finally:
+                self.render()
+            if outcome == "needs_pair":
+                self.show_pair_dialog()
+            else:
+                self.toast("Sync is on")
+
+        self.page.run_task(run)
+
+    def show_pair_dialog(self) -> None:
+        """New phone: scan the QR from the phone that's already synced (or type its code)."""
+        code_field = theme.text_field(label="Or paste the pairing code", dense=True)
+
+        async def finish(code: str) -> None:
+            try:
+                await self.sync.pair_async(code)
+            except SyncError as exc:
+                self.toast(str(exc), error=True)
+                return
+            self.close_dialog()
+            await self.native.reload_policy()
+            self.toast("Paired - this phone now follows your account's rules")
+            self.render()
+
+        async def scan(_=None):
+            try:
+                code = await self.native.scan_qr()
+            except RuntimeError as exc:
+                self.toast(str(exc), error=True)
+                return
+            if code:
+                await finish(code)
+
+        async def typed(_=None):
+            if code_field.value:
+                await finish(code_field.value.strip())
+
+        self.open_dialog(
+            ft.AlertDialog(
+                title=ft.Text("Pair this phone"),
+                content=ft.Column(
+                    [
+                        ft.Text(
+                            "Your account already syncs from another phone. On that phone open "
+                            "Settings → Sync → Add another phone (your partner enters the PIN), then "
+                            "scan the code it shows.",
+                            size=13,
+                            color=theme.MUTED,
+                        ),
+                        code_field,
+                    ],
+                    tight=True,
+                    spacing=10,
+                    width=360,
+                ),
+                actions=[
+                    ft.TextButton("Later", on_click=lambda _: self.close_dialog()),
+                    ft.TextButton("Use code", on_click=typed),
+                    ft.FilledButton("Scan QR", icon=ft.Icons.QR_CODE_SCANNER, on_click=scan),
+                ],
+            )
+        )
+
+    def show_pairing_qr(self) -> None:
+        """Existing phone: the code that hands the sync key to a new phone (needs the partner)."""
+
+        def gate():
+            code = self.sync.pairing_code()
+            from .onboarding import qr_png
+
+            self.open_dialog(
+                ft.AlertDialog(
+                    title=ft.Text("Add another phone"),
+                    content=ft.Column(
+                        [
+                            ft.Text(
+                                "On the new phone: install GuardPulse, open Settings → Sync, sign in with "
+                                "the same Google account, then tap Scan QR.",
+                                size=13,
+                                color=theme.MUTED,
+                            ),
+                            ft.Container(
+                                ft.Image(src=qr_png(code), width=220, height=220),
+                                bgcolor="#FFFFFF",
+                                padding=10,
+                                border_radius=16,
+                            ),
+                            ft.Text(
+                                "This code unlocks everything synced - only show it to your own phone.",
+                                size=11,
+                                color=theme.AMBER,
+                            ),
+                        ],
+                        tight=True,
+                        spacing=10,
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        width=320,
+                    ),
+                    actions=[ft.FilledButton("Done", on_click=lambda _: self.close_dialog())],
+                )
+            )
+
+        self.act(gate)
+
+    def sync_sign_out(self) -> None:
+        self.act(self.sync.sign_out, "Sync is off on this phone")
 
     # --- partner alerts (ntfy) -------------------------------------------------
 
@@ -523,6 +664,11 @@ class App:
                 await self._poll_native()
             if seconds % 60 == 5:
                 await self.deliver_alerts()
+            if self.sync.status().paired and (
+                (self._sync_due and time.time() >= self._sync_due) or seconds % 300 == 30
+            ):
+                self._sync_due = 0.0
+                await self.run_sync(quiet=True)
             if not self.guard.is_setup:
                 continue
             unlocked = self.guard.unlocked

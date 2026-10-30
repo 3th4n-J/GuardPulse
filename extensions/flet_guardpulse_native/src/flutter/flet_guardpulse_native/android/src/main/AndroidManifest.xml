@@ -22,6 +22,11 @@
     </queries>
 
     <application>
+        <!-- download Google's QR scanner UI with the app instead of on first scan -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="barcode_ui" />
+
         <!-- DNS-only filtering VPN. Bound by the system (BIND_VPN_SERVICE) and listed under Settings > VPN. -->
         <service
             android:name="za.co.guardpulse.shield.GuardVpnService"

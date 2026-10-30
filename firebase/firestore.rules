@@ -1,0 +1,16 @@
+rules_version = '2';
+
+// GuardPulse sync: each Google account can read and write ONLY its own
+// document. The document holds one AES-256-GCM encrypted blob, so even the
+// project owner can't read anyone's rules, partner or activity.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid}/guardpulse/{doc} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    // everything else is closed
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
