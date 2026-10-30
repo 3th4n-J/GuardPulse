@@ -3,6 +3,10 @@ package za.co.guardpulse.shield
 import android.accessibilityservice.AccessibilityService
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.Rect
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.FileObserver
@@ -33,6 +37,7 @@ class GuardAccessibilityService : AccessibilityService() {
         private const val FEED_DEBOUNCE_MS = 1200L
         private const val ESCAPE_WINDOW_MS = 2500L
         private const val SETTINGS_GRANT_MS = 90_000L
+        private const val BROWSER_REFRESH_MS = 5 * 60_000L
         private const val MAX_NODES = 600
         private const val BLANK_PAGE = "about:blank"
 
@@ -65,6 +70,7 @@ class GuardAccessibilityService : AccessibilityService() {
         Store.setOverlayWanted(this, true)
         loadPolicy()
         watchPolicy()
+        Alerts.flushAsync(this) // anything queued while offline or before a reboot
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
@@ -88,13 +94,47 @@ class GuardAccessibilityService : AccessibilityService() {
             coverApp(pkg)
             return
         }
-        Detectors.BROWSER_URL_BARS[pkg]?.let { ids ->
-            if (policy.flag("browser_overlay")) checkBrowser(pkg, ids)
-            return
-        }
         Detectors.feedFor(pkg)?.let { feed ->
             if (policy.flag(feed.setting)) checkFeed(feed)
+            return
         }
+        if (isBrowser(pkg)) {
+            if (policy.flag("browser_overlay")) checkBrowser(pkg, Detectors.BROWSER_URL_BARS[pkg].orEmpty())
+        }
+    }
+
+    // --- which apps are browsers ------------------------------------------------
+
+    private var browsers: Set<String> = emptySet()
+    private var browsersCheckedAt = 0L
+
+    /**
+     * Any app that can open https:// links counts as a browser, so the site
+     * overlay isn't limited to the ones we know by name. Re-queried every few
+     * minutes so newly installed browsers are picked up.
+     */
+    private fun isBrowser(pkg: String): Boolean {
+        if (pkg in Detectors.BROWSER_URL_BARS) return true
+        val now = SystemClock.elapsedRealtime()
+        if (now - browsersCheckedAt > BROWSER_REFRESH_MS) {
+            browsersCheckedAt = now
+            browsers = try {
+                val view = Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com"))
+                    .addCategory(Intent.CATEGORY_BROWSABLE)
+                @Suppress("DEPRECATION")
+                val infos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    packageManager.queryIntentActivities(
+                        view, PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_ALL.toLong())
+                    )
+                } else {
+                    packageManager.queryIntentActivities(view, PackageManager.MATCH_ALL)
+                }
+                infos.map { it.activityInfo.packageName }.toSet() - packageName
+            } catch (e: Exception) {
+                browsers
+            }
+        }
+        return pkg in browsers
     }
 
     // --- settings guard ---------------------------------------------------------
@@ -127,9 +167,19 @@ class GuardAccessibilityService : AccessibilityService() {
                 } else if (pinGate.attempt(NativeAuth.verify(folder, entered))) {
                     settingsGrantedUntil = SystemClock.elapsedRealtime() + SETTINGS_GRANT_MS
                     Store.event(this, "settings_unlocked", reason)
+                    Alerts.notify(
+                        this, "Settings unlocked with partner PIN",
+                        "The partner PIN was entered on the phone to $reason.", "unlock", 3,
+                    )
                     null
                 } else {
                     Store.event(this, "settings_pin_failed", reason)
+                    if (pinGate.lockedForMs > 0) { // third wrong try in a row: tell the partner once per lockout
+                        Alerts.notify(
+                            this, "Wrong PIN at Settings",
+                            "Several wrong PINs were entered trying to $reason.", "warning", 4,
+                        )
+                    }
                     "Incorrect PIN."
                 }
             },
@@ -185,13 +235,46 @@ class GuardAccessibilityService : AccessibilityService() {
     private fun checkBrowser(pkg: String, ids: List<String>) {
         if (SystemClock.elapsedRealtime() < escapingUntil) return // our own redirect in progress
         val root = rootInActiveWindow ?: return
+        val bar = findAddressBar(root, pkg, ids) ?: return
+        if (bar.isFocused) return // the user is typing, not viewing a page
+        val host = Detectors.hostFromAddressBar(bar.text)
+            ?.takeIf { Detectors.looksLikeDomain(it) } ?: return
+        if (policy.decide(host) == Decision.BLOCK) escapeSite(pkg, host, bar)
+    }
+
+    /**
+     * The browser's address bar, in three tries:
+     * 1. a known view id for browsers we've mapped;
+     * 2. any view whose id looks like an address bar ("url", "omnibox", ...);
+     * 3. the first web-address-looking text in the top quarter of the screen
+     *    (browsers with obfuscated ids).
+     */
+    private fun findAddressBar(root: AccessibilityNodeInfo, pkg: String, ids: List<String>): AccessibilityNodeInfo? {
         for (id in ids) {
-            val bar = root.findAccessibilityNodeInfosByViewId("$pkg:id/$id").firstOrNull() ?: continue
-            if (bar.isFocused) return // the user is typing, not viewing a page
-            val host = Detectors.hostFromAddressBar(bar.text) ?: return
-            if (policy.decide(host) == Decision.BLOCK) escapeSite(pkg, host, bar)
-            return
+            root.findAccessibilityNodeInfosByViewId("$pkg:id/$id").firstOrNull()?.let { return it }
         }
+        val screenTop = Rect().also { root.getBoundsInScreen(it) }
+        val topBand = screenTop.top + (screenTop.height() / 4)
+        val byId = mutableListOf<AccessibilityNodeInfo>()
+        val byText = mutableListOf<Pair<Int, AccessibilityNodeInfo>>()
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var seen = 0
+        val bounds = Rect()
+        while (queue.isNotEmpty() && seen < MAX_NODES) {
+            val node = queue.removeFirst()
+            seen++
+            if (Detectors.isLikelyUrlBarId(node.viewIdResourceName) && !node.text.isNullOrBlank()) byId.add(node)
+            val text = node.text
+            if (text != null && text.isNotBlank() && !text.contains(' ')) {
+                node.getBoundsInScreen(bounds)
+                if (bounds.top <= topBand && Detectors.hostFromCandidates(listOf(text.toString())) != null) {
+                    byText.add(bounds.top to node)
+                }
+            }
+            for (i in 0 until node.childCount) node.getChild(i)?.let(queue::add)
+        }
+        return byId.firstOrNull() ?: byText.minByOrNull { it.first }?.second
     }
 
     /**
@@ -281,7 +364,10 @@ class GuardAccessibilityService : AccessibilityService() {
 
     private fun loadPolicy() {
         val folder = Store.folder(this) ?: return
-        Policy.load(folder)?.let { policy = it }
+        Policy.load(folder)?.let {
+            policy = it
+            Store.setAlertTarget(this, it.ntfyServer, it.ntfyTopic)
+        }
     }
 
     @Suppress("DEPRECATION")
@@ -311,6 +397,12 @@ class GuardAccessibilityService : AccessibilityService() {
         // switched off in Android's Accessibility settings
         if (!stoppingByApp && Store.overlayWanted(this)) {
             Store.event(this, "accessibility_disabled", "The security overlay was switched off outside GuardPulse")
+            Alerts.notify(
+                this,
+                "Security overlay switched off",
+                "GuardPulse's overlay was turned off in Android's Accessibility settings. Blocked apps, " +
+                    "sites and short-video feeds are no longer being covered.",
+            )
         }
         cleanup()
         return super.onUnbind(intent)

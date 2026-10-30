@@ -133,6 +133,7 @@ class GuardVpnService : VpnService() {
         Store.setEnabled(this, true)
         running = true
         instance = this
+        Alerts.flushAsync(this) // anything queued while offline or before a reboot
         if (lockdown) Log.w(TAG, "Lockdown is on: only DNS goes through this VPN, so the phone will be offline")
         pool = Executors.newFixedThreadPool(8)
         reader = Thread({ readLoop(fd) }, "guardpulse-dns").also { it.start() }
@@ -200,14 +201,23 @@ class GuardVpnService : VpnService() {
             loaded = Policy.load(folder)
         }
         if (loaded == null) {
+            val wasOk = policyOk
             policyOk = false
             if (File(folder, "policy.json").exists()) {
                 Store.event(this, "policy_signature_invalid", "policy.json failed its signature check")
+                if (wasOk) {
+                    Alerts.notify(
+                        this,
+                        "Tampering detected",
+                        "GuardPulse's rules file was changed outside the app. The last good rules are still in force.",
+                    )
+                }
             }
             return // keep the last good policy (or the safe default)
         }
         policy = loaded
         policyOk = true
+        Store.setAlertTarget(this, loaded.ntfyServer, loaded.ntfyTopic)
     }
 
     @Suppress("DEPRECATION")
@@ -225,6 +235,12 @@ class GuardVpnService : VpnService() {
         // Another VPN took over, or the user disconnected us in Android settings.
         if (!stopping) {
             Store.event(this, "vpn_revoked", "The DNS filter was switched off outside GuardPulse")
+            Alerts.notify(
+                this,
+                "DNS filter switched off",
+                "GuardPulse's DNS filter was turned off in Android's settings (or another VPN took over). " +
+                    "Sites are not being filtered until it's turned back on.",
+            )
             notifyOff()
         }
         shutdown()

@@ -8,7 +8,7 @@ from typing import Callable
 
 import flet as ft
 
-from .. import __version__, updates
+from .. import __version__, alerts, updates
 from ..guard import Guard, GuardError, Locked
 from ..native import NativeBridge
 from . import theme, views
@@ -41,6 +41,7 @@ class App:
         page.title = "GuardPulse"
         theme.apply(page)
         previous = self.guard.note_app_version(__version__)
+        self.guard.ensure_alert_topic()  # partners set up before alerts existed get a topic now
         if not self.guard.is_setup and not self.guard.history(1):
             Onboarding(self).show()
         else:
@@ -208,7 +209,33 @@ class App:
             self.toast(success)
         if self.native.available:
             self.page.run_task(self.native.reload_policy)
+        if self.guard.pending_alerts():
+            self.page.run_task(self.deliver_alerts)  # tell the partner straight away
         self.render()
+
+    # --- partner alerts (ntfy) -------------------------------------------------
+
+    async def deliver_alerts(self) -> tuple[int, int]:
+        """Send queued alerts; also nudge the Android layer's own queue."""
+        result = await alerts.deliver_pending_async(self.guard)
+        await self.native.flush_alerts(self.guard.setting("ntfy_server"), self.guard.setting("ntfy_topic"))
+        return result
+
+    def send_test_alert(self) -> None:
+        async def run():
+            if not self.guard.setting("ntfy_topic"):
+                self.toast("Set up your accountability partner first.", error=True)
+                return
+            self.guard.queue_test_alert()
+            self.toast("Sending test alert…")
+            sent, failed = await self.deliver_alerts()
+            if failed:
+                self.toast("Couldn't reach ntfy - it'll retry automatically.", error=True)
+            else:
+                self.toast("Test alert sent - check your partner's ntfy app.")
+            self.render()
+
+        self.page.run_task(run)
 
     # --- DNS filter (Android) ------------------------------------------------
 
@@ -483,6 +510,8 @@ class App:
             seconds += 1
             if seconds % 5 == 0:
                 await self._poll_native()
+            if seconds % 60 == 5:
+                await self.deliver_alerts()
             if not self.guard.is_setup:
                 continue
             unlocked = self.guard.unlocked

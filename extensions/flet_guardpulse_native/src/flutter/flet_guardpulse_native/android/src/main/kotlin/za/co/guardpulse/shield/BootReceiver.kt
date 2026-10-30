@@ -9,6 +9,7 @@ import android.net.VpnService
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED && intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
+        Alerts.flushAsync(context) // alerts queued before the reboot
         if (!Store.enabled(context)) return
         if (VpnService.prepare(context) != null) {
             Store.event(context, "vpn_not_prepared", "VPN permission was removed")

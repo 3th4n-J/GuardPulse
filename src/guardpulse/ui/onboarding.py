@@ -163,12 +163,39 @@ class Onboarding:
                     width=380,
                 ),
                 ft.FilledButton(
+                    "Next: partner alerts",
+                    icon=ft.Icons.ARROW_FORWARD,
+                    on_click=lambda _: self.alerts_step(),
+                    width=320,
+                    height=48,
+                ),
+            ]
+        )
+
+    def alerts_step(self) -> None:
+        from .views import ntfy_subscribe_controls  # views imports this module
+
+        g = self.app.guard
+        url = f"{g.setting('ntfy_server')}/{g.setting('ntfy_topic')}"
+        self._screen(
+            [
+                ft.Icon(ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED, size=56, color=theme.CYAN),
+                ft.Text("Partner alerts", size=24, weight=ft.FontWeight.W_800, color=theme.TEXT),
+                ft.Text(
+                    "Your partner gets an instant notification when GuardPulse is unlocked, a site is "
+                    "whitelisted, or any protection is switched off - even outside the app.",
+                    text_align=ft.TextAlign.CENTER,
+                    color=theme.MUTED,
+                ),
+                *ntfy_subscribe_controls(url),
+                ft.FilledButton(
                     "Done - start protecting",
                     icon=ft.Icons.SHIELD,
                     on_click=lambda _: self._finish(),
                     width=320,
                     height=48,
                 ),
+                ft.TextButton("Partner will do this later", on_click=lambda _: self._finish()),
             ]
         )
 

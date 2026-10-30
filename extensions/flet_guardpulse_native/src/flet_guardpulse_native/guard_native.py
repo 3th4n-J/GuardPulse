@@ -85,6 +85,10 @@ class GuardNative(ft.Service):
         """``"started"``, ``"needs_permission"`` (settings opened) or a refusal reason."""
         return str(await self._invoke_method("update_install", {}, timeout=120))
 
+    async def flush_alerts(self, server: str, topic: str) -> int:
+        """Retry the native tamper-alert queue; returns how many are still waiting."""
+        return int(await self._invoke_method("flush_alerts", {"server": server, "topic": topic}, timeout=60) or 0)
+
     async def device_admin_active(self) -> bool:
         return bool(await self._invoke_method("device_admin_active", {}))
 

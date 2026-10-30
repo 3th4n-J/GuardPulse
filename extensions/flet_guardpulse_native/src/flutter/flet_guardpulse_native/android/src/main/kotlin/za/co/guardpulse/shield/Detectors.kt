@@ -76,6 +76,36 @@ object Detectors {
 
     fun feedFor(packageName: String): Feed? = FEEDS.firstOrNull { it.packageName == packageName }
 
+    // --- any browser -----------------------------------------------------------------
+
+    /** Words that browsers use in their address-bar view ids ("url_bar", "omnibox", ...). */
+    private val URL_BAR_ID_WORDS = listOf("url", "address", "omnibox", "location_bar", "addressbar", "search_box")
+
+    /** True for a view id (e.g. "com.foo.browser:id/url_field") that is probably an address bar. */
+    fun isLikelyUrlBarId(viewId: String?): Boolean {
+        val name = viewId?.substringAfter(":id/", "")?.lowercase() ?: return false
+        if (name.isEmpty()) return false
+        return URL_BAR_ID_WORDS.any { name.contains(it) }
+    }
+
+    /**
+     * For a browser we've never seen: the first text near the top of the screen
+     * that reads as a web address. ``candidates`` are on-screen texts in
+     * top-to-bottom order; plain words and sentences are skipped.
+     */
+    fun hostFromCandidates(candidates: List<String>): String? =
+        candidates.firstNotNullOfOrNull { text ->
+            val t = text.trim()
+            if (t.length > 2048 || t.count { it == '.' } == 0) null
+            else hostFromAddressBar(t)?.takeIf { looksLikeDomain(it) }
+        }
+
+    /** "m.reddit.com" yes; "v2.0" or "e.g" no - needs a letters-only TLD of 2+ chars. */
+    fun looksLikeDomain(host: String): Boolean {
+        val tld = host.substringAfterLast('.', "")
+        return tld.length >= 2 && tld.all { it in 'a'..'z' } && host.split('.').all { it.isNotEmpty() }
+    }
+
     /** "Shorts" matches "Shorts" and "Shorts, tab 2 of 5" but not "No Shorts here". */
     fun labelMatches(text: CharSequence?, labels: List<String>): Boolean {
         val t = text?.toString()?.trim() ?: return false

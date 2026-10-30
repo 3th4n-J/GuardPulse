@@ -21,7 +21,15 @@ class GuardDeviceAdminReceiver : DeviceAdminReceiver() {
     override fun onDisabled(context: Context, intent: Intent) {
         // reached only after the settings-guard let it through (or admin was
         // removed via adb); either way, record it for the partner
+        val wanted = Store.adminWanted(context)
         Store.setAdminWanted(context, false)
-        Store.event(context, "device_admin_removed", "Uninstall protection was switched off")
+        if (wanted) { // not when the partner turned it off in-app (the app clears "wanted" first)
+            Store.event(context, "device_admin_removed", "Uninstall protection was switched off")
+            Alerts.notify(
+                context,
+                "Uninstall protection removed",
+                "GuardPulse's uninstall protection was deactivated. The app can now be uninstalled.",
+            )
+        }
     }
 }

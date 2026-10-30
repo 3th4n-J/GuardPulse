@@ -11,7 +11,7 @@ Block sites and apps, filter adult content with Cloudflare Family DNS, and put s
 ![Python](https://img.shields.io/badge/Python-3.12-14B8A6?style=for-the-badge&logo=python&logoColor=white)
 ![Android](https://img.shields.io/badge/Android-only-34D399?style=for-the-badge&logo=android&logoColor=white)
 ![Price](https://img.shields.io/badge/Price-free%20forever-06122B?style=for-the-badge)
-![Status](https://img.shields.io/badge/status-phase%204%20of%206-FBBF24?style=for-the-badge)
+![Status](https://img.shields.io/badge/status-phase%205%20of%206-FBBF24?style=for-the-badge)
 
 [Features](#-features) · [How it works](#-how-it-works) · [Roadmap](#-roadmap) · [Getting started](#-getting-started) · [Security model](#-security-model) · [FAQ](#-faq)
 
@@ -31,7 +31,7 @@ Block sites and apps, filter adult content with Cloudflare Family DNS, and put s
 | 🛡️ | **Cloudflare Family DNS** | Every app's DNS goes through `1.1.1.3` / `1.0.0.3`, which filter adult content and malware. |
 | 🤝 | **Accountability partner** | Your partner's PIN is needed for anything that loosens protection. |
 | 🔑 | **Remote unlock codes** | Away from your partner? They read you a one-time 6-digit code from their authenticator app. |
-| 🚨 | **Tamper alerts** | Unlocks, wrong PINs, whitelisting and protection being switched off are queued for your partner. |
+| 🚨 | **Partner alerts** | Unlocks, wrong PINs, whitelisting, deletions and any protection being switched off are pushed to your partner's phone through the free [ntfy](https://ntfy.sh) app, even when the change happens outside GuardPulse. |
 | 🧷 | **Uninstall protection** | GuardPulse can't be removed without the partner PIN. |
 | 🔏 | **Sealed rules** | The rule set is signed with HMAC-SHA256, so editing the database outside the app is detected and reported. |
 
@@ -48,7 +48,7 @@ Making protection **stricter is always free**. Making it **looser always needs y
 | Resume a paused schedule | Pause or delete a schedule |
 | Turn a protection **on** | Turn a protection **off** |
 | Shorten the unlock window | Lengthen the unlock window |
-| | Change the partner, PIN, authenticator or alert webhook |
+| | Change the partner, PIN, authenticator or partner-alert link |
 
 An unlock lasts 1 to 30 minutes (5 by default) and is held in memory only, so restarting the app locks it again. Three wrong attempts trigger a back-off that starts at 30 seconds and doubles each time, up to an hour. The back-off survives restarts.
 
@@ -71,7 +71,7 @@ flowchart LR
     Policy --> VPN & A11y & Admin
     VPN -->|"allowed lookups"| CF(["Cloudflare Family<br/>1.1.1.3 / 1.0.0.3"])
     A11y & Admin -->|"tamper events"| Guard
-    Guard -->|"alerts"| N8N(["n8n webhook → partner"])
+    Guard -->|"alerts"| NTFY(["ntfy.sh → partner's phone"])
 ```
 
 Flet handles the UI, data and rules. Android only exposes VPN, Accessibility and Device Admin to native code, so the enforcement services live in a Kotlin extension that reads the signed `policy.json` the Python side writes after every change.
@@ -94,7 +94,7 @@ An Android Accessibility service watches which app is in front and covers it wit
 | Trigger | What happens |
 |---|---|
 | A blocked app opens, or an app inside an active schedule | "App is blocked" cover; **Close** returns to the home screen |
-| A browser shows a blacklisted site | "Site blocked" cover, then the tab is sent to `about:blank` and you're taken to the home screen, so reopening the browser doesn't loop back to the site. Works in Chrome, Firefox, Samsung Internet, Edge, Brave, Opera, DuckDuckGo, Vivaldi and more |
+| **Any** browser shows a blacklisted site (every app that opens web links counts, not just a fixed list) | "Site blocked" cover, then the tab is sent to `about:blank` and you're taken to the home screen, so reopening the browser doesn't loop back to the site. Works in Chrome, Firefox, Samsung Internet, Edge, Brave, Opera, DuckDuckGo, Vivaldi and more |
 | You open YouTube Shorts, Instagram or Facebook Reels, or Snapchat Spotlight | Bounces you back with a brief "Shorts are blocked" message; the rest of the app keeps working |
 
 It only reads the foreground app's name, the browser's address bar and the labels of short-video screens. Nothing leaves the phone.
@@ -119,14 +119,28 @@ The PIN is checked **on the device, while the app is closed** — the native lay
 
 > Detection of Settings screens is text-based and varies by Android version and brand, so it errs toward asking for the PIN. If a screen slips through on your phone, tell me the device and Android version.
 
+### Partner alerts (phase 5)
+
+When your partner is set up, GuardPulse creates a private, unguessable alert channel on [ntfy.sh](https://ntfy.sh). Your partner installs the free **ntfy** app (Android/iOS), scans the QR code GuardPulse shows, and taps Subscribe. That's the whole setup: no account, no server, no password on your phone.
+
+| Your partner hears about | Sent by |
+|---|---|
+| Unlocks with the PIN or authenticator code, repeated wrong PINs | the app |
+| A site whitelisted, a block / app / schedule deleted, the PIN changed | the app |
+| A protection switched off in Settings (Family DNS, overlay, feed blocking, …) | the app |
+| The DNS filter switched off in Android, the overlay disabled in Accessibility, uninstall protection removed, wrong PINs at the Settings guard, the rules file tampered with | **the Android layer, the moment it happens**, even if GuardPulse is never opened again |
+
+Alerts wait in a queue until ntfy accepts them, so being offline only delays them. **Settings → Partner alerts** has a *Send test alert* button and the partner's subscribe QR (which needs the partner PIN). If the link ever leaks, the partner can make a new one there.
+
 ## 🗺️ Roadmap
 
 - [x] **Phase 1: Core app.** Flet 1.0.5 UI, SQLite with an HMAC seal, partner PIN (scrypt) and TOTP codes, the one-way ratchet, schedules, activity log, signed policy export
 - [x] **Phase 2: DNS filter.** Kotlin `VpnService` that intercepts DNS only: blacklisted names get NXDOMAIN and everything else goes to Cloudflare Family. Also: reloads instantly when rules change, restarts after reboot, raises a tamper alert when the VPN is revoked, warns when Private DNS bypasses the filter, and blocks browsers' own encrypted-DNS (DoH) endpoints
-- [x] **Phase 3: Security overlay.** `AccessibilityService` that covers blocked apps (always or on a schedule), blocked sites in 15+ browsers, and YouTube Shorts / Instagram Reels / Facebook Reels / Snapchat Spotlight. Also adds an installed-app picker and raises a tamper alert if the overlay is switched off outside the app
+- [x] **Phase 3: Security overlay.** `AccessibilityService` that covers blocked apps (always or on a schedule), blocked sites in any browser, and YouTube Shorts / Instagram Reels / Facebook Reels / Snapchat Spotlight. Also adds an installed-app picker and raises a tamper alert if the overlay is switched off outside the app
 - [x] **Updates:** daily GitHub release check, signature-verified in-place install, safety copies and automatic data recovery
 - [x] **Phase 4: Uninstall + settings protection.** Device Admin blocks uninstalling GuardPulse, and the overlay covers Android's Settings/installer screens that act on GuardPulse (uninstall, force stop, clear storage, deactivate device admin, disable) with a partner-PIN prompt. The native layer verifies the PIN offline (PBKDF2, from an HMAC-sealed file) so it works while the app is closed. Switching either off outside the app raises a tamper alert.
-- [ ] **Phase 5: Partner alerts.** The alert outbox posts to a self-hosted n8n webhook, which emails or WhatsApps the partner. A scheduled n8n check sends a "phone has gone quiet" alert after 24 hours without a check-in. Alerts are queued while the phone is offline.
+- [x] **Phase 5: Partner alerts.** Free push alerts to the partner's phone through [ntfy](https://ntfy.sh): no account, no server, no password stored on the phone. Tamper alerts are sent straight from the Android layer the moment they happen, and everything is queued and retried while offline. The site overlay also now works in **any** browser.
+- [ ] **Later (optional): "phone went quiet" alert.** Nothing on the phone can report its own uninstall or factory reset. A free [Healthchecks.io](https://healthchecks.io) heartbeat could notice the silence and tell the partner.
 - [ ] **Phase 6: Google sign-in + sync.** Sign in with Google to keep rules, partner/PIN and activity in sync across devices. Uses Firebase's free Spark plan, end-to-end encrypted with a key that never leaves your devices. New devices pair by QR code, and showing that code needs the partner PIN.
 
 ## 🚀 Getting started

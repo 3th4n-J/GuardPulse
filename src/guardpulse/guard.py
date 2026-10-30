@@ -16,6 +16,8 @@ held in memory only, so restarting the app locks it again.
 from __future__ import annotations
 
 import json
+import re
+import secrets
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -36,8 +38,16 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "uninstall_protection": False,
     "settings_guard": False,
     "unlock_minutes": 5,
-    "alert_webhook_url": "",
+    # partner alerts go to https://ntfy.sh/<topic>; the topic is generated once a
+    # partner exists and is the only "secret" (long + random = unguessable)
+    "ntfy_server": "https://ntfy.sh",
+    "ntfy_topic": "",
 }
+NTFY_TOPIC_RE = re.compile(r"[A-Za-z0-9_-]{8,64}")
+
+
+def new_alert_topic() -> str:
+    return "guardpulse-" + secrets.token_hex(12)
 PROTECTIVE_FLAGS = {
     "family_dns",
     "browser_overlay",
@@ -199,6 +209,8 @@ class Guard:
                 (name, (contact or "").strip(), security.hash_pin(pin), secret, self.clock()),
             )
             self._write_native_auth(pin)
+            if not self.setting("ntfy_topic"):
+                self._write_setting("ntfy_topic", new_alert_topic())
             self._audit("partner.setup", name, "setup")
         return secret
 
@@ -464,22 +476,72 @@ class Guard:
                 raise GuardError(f"Unlock time must be {low}-{high} minutes.")
             if value > current:
                 self._require("lengthen the unlock time")
-        elif key == "alert_webhook_url":
+        elif key == "ntfy_server":
+            value = (value or "").strip().rstrip("/")
+            if not value.startswith("https://"):
+                raise GuardError("The ntfy server must be an https:// address.")
+            self._require("change where alerts are sent")
+        elif key == "ntfy_topic":
             value = (value or "").strip()
-            if value and not value.startswith("https://"):
-                raise GuardError("The alert webhook must be an https:// address.")
+            if not NTFY_TOPIC_RE.fullmatch(value):
+                raise GuardError("A topic is 8-64 letters, digits, - or _.")
             self._require("change where alerts are sent")
         if value == current:
             return
         with self._tx():
-            self.conn.execute(
-                "INSERT INTO settings (key, value) VALUES (?, ?)"
-                " ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-                (key, json.dumps(value)),
-            )
+            self._write_setting(key, value)
             self._audit("setting.changed", f"{key}={value}", self._unlocked_by)
             if key in PROTECTIVE_FLAGS and not value:
                 self._queue("protection_disabled", {"setting": key})
+
+    def _write_setting(self, key: str, value) -> None:
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?)"
+            " ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            (key, json.dumps(value)),
+        )
+
+    # --- partner alerts (ntfy) ---------------------------------------------
+
+    def ensure_alert_topic(self) -> str:
+        """Give the partner an unguessable ntfy topic once a partner exists.
+
+        Creating it is free (it only adds protection); changing it later needs
+        the partner. Returns the topic ("" while no partner is set up).
+        """
+        topic = self.setting("ntfy_topic")
+        if topic or not self.is_setup:
+            return topic
+        topic = new_alert_topic()
+        with self._tx():
+            self._write_setting("ntfy_topic", topic)
+            self._audit("alerts.topic_created", "")
+        return topic
+
+    def alert_subscribe_url(self) -> str:
+        """https link the partner opens / scans to subscribe (needs the partner)."""
+        self._require("see the partner alert link")
+        return f"{self.setting('ntfy_server')}/{self.ensure_alert_topic()}"
+
+    def new_alert_topic_now(self) -> str:
+        """Replace the topic (e.g. if it leaked). Needs the partner."""
+        self._require("change where alerts are sent")
+        topic = new_alert_topic()
+        with self._tx():
+            self._write_setting("ntfy_topic", topic)
+            self._audit("alerts.topic_changed", "", self._unlocked_by)
+        return topic
+
+    def queue_test_alert(self) -> None:
+        self._queue("test", {})
+        self._audit("alerts.test")
+
+    def mark_alert(self, alert_id: int, sent: bool) -> None:
+        """Delivery bookkeeping for the outbox (not sealed: it's not protection state)."""
+        if sent:
+            self.conn.execute("UPDATE outbox SET sent_at = ? WHERE id = ?", (self.clock(), alert_id))
+        else:
+            self.conn.execute("UPDATE outbox SET attempts = attempts + 1 WHERE id = ?", (alert_id,))
 
     # --- tamper detection --------------------------------------------------
 
@@ -513,12 +575,14 @@ class Guard:
         from .native import TAMPER_EVENTS
 
         if event in TAMPER_EVENTS:
-            self.report_tamper(detail or event)
+            # the Android layer already alerted the partner when it happened
+            # (so it arrives even if this app is never reopened) - don't repeat it
+            self.report_tamper(detail or event, alert=False)
         else:
             self._audit(f"native.{event}", detail)
 
-    def report_tamper(self, what: str) -> None:
-        """Called by the native layer when a protection is switched off outside the app."""
+    def report_tamper(self, what: str, alert: bool = True) -> None:
+        """Flag tampering. ``alert=False`` when the partner was already told natively."""
         with self._tx():
             self.conn.execute(
                 "INSERT INTO meta (key, value) VALUES ('tampered', ?)"
@@ -526,7 +590,8 @@ class Guard:
                 (what,),
             )
             self._audit("tamper.detected", what)
-            self._queue("tamper", {"what": what})
+            if alert:
+                self._queue("tamper", {"what": what})
         self.tampered = True
 
     # --- export / history --------------------------------------------------

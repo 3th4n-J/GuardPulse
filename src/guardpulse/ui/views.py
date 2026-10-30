@@ -61,6 +61,9 @@ ACTION_LABELS = {
     "filter.enabled": ("DNS filter on", ft.Icons.VPN_LOCK_OUTLINED),
     "filter.disabled": ("DNS filter off", ft.Icons.POWER_SETTINGS_NEW),
     "overlay.setup_opened": ("Overlay setup opened", ft.Icons.LAYERS_OUTLINED),
+    "alerts.topic_created": ("Partner alerts set up", ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED),
+    "alerts.topic_changed": ("Partner alert link changed", ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED),
+    "alerts.test": ("Test alert sent", ft.Icons.SEND),
     "uninstall.enabled": ("Uninstall protection on", ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED),
     "uninstall.disabled": ("Uninstall protection off", ft.Icons.GPP_BAD_OUTLINED),
     "native.device_admin_removed": ("Uninstall protection removed", ft.Icons.GPP_BAD_OUTLINED),
@@ -968,14 +971,6 @@ def settings(app: App) -> list[ft.Control]:
             lambda: g.set_setting("unlock_minutes", round(e.control.value)), "Unlock time saved"
         ),
     )
-    webhook = ft.TextField(
-        label="Alert webhook (n8n)",
-        value=s["alert_webhook_url"],
-        hint_text="https://n8n.example.com/webhook/guardpulse",
-        prefix_icon=ft.Icons.WEBHOOK,
-        keyboard_type=ft.KeyboardType.URL,
-        expand=True,
-    )
 
     out: list[ft.Control] = [
         theme.section_title("Protection", ft.Icons.SHIELD_OUTLINED),
@@ -1054,48 +1049,8 @@ def settings(app: App) -> list[ft.Control]:
             )
         )
 
-    pending = len(g.pending_alerts())
-    out += [
-        theme.section_title("Tamper alerts", ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED),
-        theme.card(
-            ft.Column(
-                [
-                    ft.Text(
-                        "Unlocks, wrong PINs, whitelisting and protection being switched off are "
-                        "sent to your partner through this webhook.",
-                        size=12,
-                        color=theme.MUTED,
-                    ),
-                    ft.Row(
-                        [
-                            webhook,
-                            ft.IconButton(
-                                icon=ft.Icons.SAVE_OUTLINED,
-                                tooltip="Save (partner PIN)",
-                                on_click=lambda _: app.act(
-                                    lambda: g.set_setting("alert_webhook_url", webhook.value), "Webhook saved"
-                                ),
-                            ),
-                        ]
-                    ),
-                    ft.Row(
-                        [
-                            ft.Icon(ft.Icons.OUTBOX_OUTLINED, size=16, color=theme.MUTED),
-                            ft.Text(
-                                f"{pending} alert{'s' if pending != 1 else ''} queued - sending arrives in Phase 5",
-                                size=12,
-                                color=theme.MUTED,
-                            ),
-                        ],
-                        spacing=6,
-                    ),
-                ],
-                spacing=10,
-            ),
-            padding=14,
-        ),
-        theme.section_title("Activity log", ft.Icons.HISTORY),
-    ]
+    out += [theme.section_title("Partner alerts", ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED), _alerts_card(app)]
+    out += [theme.section_title("Activity log", ft.Icons.HISTORY)]
     rows = g.history(30)
     out.append(
         theme.card(ft.Column([_activity_tile(r) for r in rows], spacing=0), padding=4)
@@ -1169,6 +1124,104 @@ def _about_card(app: App) -> ft.Control:
             spacing=8,
         ),
         padding=20,
+    )
+
+
+def _alerts_card(app: App) -> ft.Control:
+    g = app.guard
+    topic = g.setting("ntfy_topic")
+    pending = len(g.pending_alerts())
+    if not topic:
+        body: list[ft.Control] = [
+            ft.Text(
+                "Once your accountability partner is set up, they get instant alerts on their phone "
+                "through the free ntfy app.",
+                size=12,
+                color=theme.MUTED,
+            )
+        ]
+    else:
+        status = (
+            f"{pending} alert{'s' if pending != 1 else ''} waiting to send (retries automatically)"
+            if pending
+            else "All alerts delivered"
+        )
+        body = [
+            ft.Text(
+                "Unlocks, wrong PINs, whitelisting, deletions and any protection being switched off - "
+                "even outside the app - are pushed to your partner's ntfy app.",
+                size=12,
+                color=theme.MUTED,
+            ),
+            ft.Row(
+                [
+                    ft.Icon(
+                        ft.Icons.OUTBOX_OUTLINED if pending else ft.Icons.MARK_EMAIL_READ_OUTLINED,
+                        size=16,
+                        color=theme.AMBER if pending else theme.PULSE,
+                    ),
+                    ft.Text(status, size=12, color=theme.MUTED, expand=True),
+                ],
+                spacing=6,
+            ),
+            ft.Row(
+                [
+                    ft.OutlinedButton(
+                        "Partner: subscribe",
+                        icon=ft.Icons.QR_CODE_2,
+                        on_click=lambda _: app.act(lambda: _ntfy_dialog(app)),
+                    ),
+                    ft.OutlinedButton("Send test alert", icon=ft.Icons.SEND, on_click=lambda _: app.send_test_alert()),
+                ],
+                wrap=True,
+            ),
+        ]
+    return theme.card(ft.Column(body, spacing=10), padding=14)
+
+
+def ntfy_subscribe_controls(url: str) -> list[ft.Control]:
+    """QR + steps for the partner to subscribe (shared by onboarding and Settings)."""
+    return [
+        ft.Text(
+            "Partner: install the free ntfy app (Play Store / App Store), then scan this code "
+            "with your camera and tap Subscribe.",
+            size=12,
+            color=theme.MUTED,
+            text_align=ft.TextAlign.CENTER,
+        ),
+        ft.Container(
+            ft.Image(src=qr_png(url), width=200, height=200),
+            bgcolor="#FFFFFF",
+            padding=10,
+            border_radius=16,
+        ),
+        ft.Text(url, size=11, color=theme.MUTED, selectable=True, text_align=ft.TextAlign.CENTER),
+    ]
+
+
+def _ntfy_dialog(app: App) -> None:
+    url = app.guard.alert_subscribe_url()  # needs the partner
+
+    def new_topic(_):
+        app.guard.new_alert_topic_now()
+        app.close_dialog()
+        app.toast("New alert link - your partner must subscribe again")
+        _ntfy_dialog(app)
+
+    app.open_dialog(
+        ft.AlertDialog(
+            title=ft.Text("Partner alerts"),
+            content=ft.Column(
+                ntfy_subscribe_controls(url),
+                tight=True,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                width=320,
+            ),
+            actions=[
+                ft.TextButton("New link", on_click=new_topic),
+                ft.FilledButton("Done", on_click=lambda _: app.close_dialog()),
+            ],
+        )
     )
 
 
