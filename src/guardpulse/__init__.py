@@ -1,3 +1,3 @@
 """GuardPulse - a completely free content blocker with accountability controls."""
 
-__version__ = "0.8.0"
+__version__ = "0.8.1"
