@@ -47,12 +47,21 @@ class GuardVpnService : VpnService() {
 
         @Volatile var running = false
             private set
-        @Volatile var alwaysOn = false
-            private set
-        @Volatile var lockdown = false
-            private set
         @Volatile var policyOk = false
             private set
+        @Volatile private var instance: GuardVpnService? = null
+
+        /** Always-on VPN is set for GuardPulse (read live: the user can change it any time). */
+        val alwaysOn: Boolean
+            get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && instance?.isAlwaysOn == true
+
+        /**
+         * "Block connections without VPN" is on. This tunnel only carries DNS, so
+         * lockdown blocks every other connection and the phone goes offline - the
+         * app warns the user to switch it off.
+         */
+        val lockdown: Boolean
+            get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && instance?.isLockdownEnabled == true
         val blocked = AtomicLong()
         val forwarded = AtomicLong()
 
@@ -123,10 +132,8 @@ class GuardVpnService : VpnService() {
         stopping = false
         Store.setEnabled(this, true)
         running = true
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            alwaysOn = isAlwaysOn
-            lockdown = isLockdownEnabled
-        }
+        instance = this
+        if (lockdown) Log.w(TAG, "Lockdown is on: only DNS goes through this VPN, so the phone will be offline")
         pool = Executors.newFixedThreadPool(8)
         reader = Thread({ readLoop(fd) }, "guardpulse-dns").also { it.start() }
         Log.i(TAG, "DNS filter running (family=${policy.familyDns})")
@@ -231,6 +238,7 @@ class GuardVpnService : VpnService() {
 
     private fun shutdown() {
         running = false
+        instance = null
         observer?.stopWatching()
         observer = null
         reader?.interrupt()

@@ -347,6 +347,17 @@ class NativeGlueTests(GuardTestCase):
         self.assertEqual(bridge.drain_events(), [])
         self.assertFalse(bridge.available)
 
+    def test_lockdown_warning(self):
+        from guardpulse.native import NativeBridge
+
+        bridge = NativeBridge(folder=self.folder)
+        bridge.state = {"vpn_running": True, "lockdown": True}
+        self.assertIn("ALL internet", bridge.lockdown_warning())
+        bridge.state = {"vpn_running": True, "lockdown": False}
+        self.assertIsNone(bridge.lockdown_warning())
+        bridge.state = {"vpn_running": False, "lockdown": True}  # filter off: lockdown irrelevant
+        self.assertIsNone(bridge.lockdown_warning())
+
     def test_private_dns_warning(self):
         from guardpulse.native import NativeBridge
 

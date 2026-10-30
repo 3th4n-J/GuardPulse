@@ -293,13 +293,25 @@ def home(app: App) -> list[ft.Control]:
     warning = app.native.private_dns_warning()
     if warning:
         out.append(_notice(ft.Icons.GPP_BAD_OUTLINED, "Private DNS is bypassing the filter", warning, theme.DANGER))
-    if app.native.needs_always_on:
+    lockdown = app.native.lockdown_warning()
+    if lockdown:
+        out.append(
+            _notice(
+                ft.Icons.WIFI_OFF,
+                "Turn off \"Block connections without VPN\"",
+                lockdown,
+                theme.DANGER,
+                action=ft.TextButton("Open", on_click=lambda _: app.open_vpn_settings()),
+            )
+        )
+    elif app.native.needs_always_on:
         out.append(
             _notice(
                 ft.Icons.AUTORENEW,
                 "Turn on Always-on VPN",
                 "In Android's VPN settings, tap the gear next to GuardPulse and switch on "
-                "'Always-on VPN' and 'Block connections without VPN'.",
+                "'Always-on VPN'. Leave 'Block connections without VPN' OFF - it stops all "
+                "internet with GuardPulse's DNS-only filter.",
                 theme.AMBER,
                 action=ft.TextButton("Open", on_click=lambda _: app.open_vpn_settings()),
             )
