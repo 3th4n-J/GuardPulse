@@ -167,7 +167,7 @@ Sign in with Google on each phone and they keep the same rules, blocked apps, sc
 2. **Add app → Android**: package name `za.co.guardpulse.guardpulse`, SHA-1 `B0:FE:4A:EC:DA:AB:D1:62:1C:57:07:13:9E:EA:8A:BB:76:55:CB:78` (your release key). You can skip downloading `google-services.json`, because the app doesn't use the Firebase SDK. Then in **Project settings → Your apps → Add fingerprint**, also add SHA-256 `6A:BA:3B:6C:14:D4:F1:9C:93:73:EC:67:23:20:CE:67:24:49:9A:94:E3:4A:7A:D4:89:D1:B3:F0:8B:0E:6D:B8`.
 3. **Build → Authentication → Get started → Sign-in method → Google → Enable**, pick a support email and save. Open the Google provider again and copy the **Web client ID** under *Web SDK configuration*.
 4. **Build → Firestore Database → Create database → Production mode** (location: `africa-south1` Johannesburg, or the nearest one). On the **Rules** tab, paste [`firebase/firestore.rules`](firebase/firestore.rules) and **Publish**.
-5. **Project settings → General**: copy the **Web API key** and **Project ID**.
+5. **Project settings → General**: copy the **Project ID**. For the **Web API key**, choose **Add app → Web (`</>`)** (nickname `GuardPulse sync`, no Hosting) and copy `apiKey` from the config it shows. That key has no Android-app restriction, so it works with the app's plain REST calls.
 6. Put the three values in [`src/guardpulse/firebase.json`](src/guardpulse/firebase.json). They identify the project and aren't secrets; the Firestore rules are what protect the data. Then build a release APK.
 
 > Google sign-in only works in APKs signed with the key registered in step 2, i.e. `build-release.ps1` builds. Debug builds can't sign in unless you add their SHA-1 too.
