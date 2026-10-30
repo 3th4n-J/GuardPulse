@@ -101,11 +101,8 @@ def apply(page: ft.Page) -> None:
             border_side=ft.BorderSide(1.5, MUTED),
             shape=ft.RoundedRectangleBorder(radius=4),
         ),
-        switch_theme=ft.SwitchTheme(
-            thumb_color=_states(NAVY, MUTED),
-            track_color=_states(PULSE, FIELD),
-            track_outline_color=_states(PULSE, EDGE),
-        ),
+        # no switch_theme: a themed thumb blended into the track ("solid pill").
+        # Switches keep Material's own thumb and set active_color=PULSE each.
         slider_theme=ft.SliderTheme(
             active_track_color=CYAN,
             inactive_track_color=OUTLINE,
