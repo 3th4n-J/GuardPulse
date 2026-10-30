@@ -15,25 +15,158 @@ AMBER = "#FBBF24"
 DANGER = "#F87171"
 TEXT = "#E6F1FF"
 MUTED = "#8FA3C7"
+FIELD = "#0A1A3A"  # text-box fill: a touch darker than cards so boxes read as inputs
+EDGE = "#2A4A86"  # visible-but-quiet outline for inputs and secondary buttons
 # the logo's gradient (assets/icon.png)
 BRAND_BLUE = "#1D50C5"
 BRAND_TEAL = "#23C6C0"
 
+RADIUS = 14  # corners for inputs and buttons
+
+
+def _states(selected: str, default: str) -> dict:
+    return {ft.ControlState.SELECTED: selected, ft.ControlState.DEFAULT: default}
+
 
 def apply(page: ft.Page) -> None:
+    """One theme for every control, so no Material default colours show through."""
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = NAVY
+    rounded = ft.RoundedRectangleBorder(radius=RADIUS)
     page.dark_theme = ft.Theme(
-        color_scheme_seed=CYAN,
+        use_material3=True,
         color_scheme=ft.ColorScheme(
             primary=CYAN,
+            on_primary=NAVY,
+            primary_container=ft.Colors.with_opacity(0.22, CYAN),
+            on_primary_container=TEXT,
             secondary=PULSE,
-            surface=SURFACE,
+            on_secondary=NAVY,
+            secondary_container=ft.Colors.with_opacity(0.22, CYAN),
+            on_secondary_container=CYAN,
+            tertiary=TEAL,
+            on_tertiary=NAVY,
             error=DANGER,
+            on_error=NAVY,
+            surface=SURFACE,
+            on_surface=TEXT,
+            on_surface_variant=MUTED,
+            surface_container_lowest=NAVY,
+            surface_container_low=SURFACE,
+            surface_container=SURFACE,
+            surface_container_high=SURFACE_HI,
+            surface_container_highest=SURFACE_HI,
+            outline=EDGE,
+            outline_variant=OUTLINE,
+            inverse_surface=TEXT,
+            on_inverse_surface=NAVY,
+            surface_tint=ft.Colors.TRANSPARENT,  # no pink/purple M3 tint on raised surfaces
+        ),
+        scaffold_bgcolor=NAVY,
+        canvas_color=SURFACE,
+        divider_color=OUTLINE,
+        hint_color=MUTED,
+        filled_button_theme=ft.FilledButtonTheme(
+            style=ft.ButtonStyle(bgcolor=CYAN, color=NAVY, shape=rounded, icon_color=NAVY)
+        ),
+        outlined_button_theme=ft.OutlinedButtonTheme(
+            style=ft.ButtonStyle(
+                color=CYAN,
+                icon_color=CYAN,
+                side=ft.BorderSide(1, EDGE),
+                shape=rounded,
+            )
+        ),
+        text_button_theme=ft.TextButtonTheme(style=ft.ButtonStyle(color=CYAN, icon_color=CYAN, shape=rounded)),
+        segmented_button_theme=ft.SegmentedButtonTheme(
+            style=ft.ButtonStyle(
+                bgcolor=_states(ft.Colors.with_opacity(0.22, CYAN), FIELD),
+                color=_states(CYAN, MUTED),
+                icon_color=_states(CYAN, MUTED),
+                side=ft.BorderSide(1, EDGE),
+                shape=rounded,
+            )
+        ),
+        chip_theme=ft.ChipTheme(
+            bgcolor=FIELD,
+            selected_color=ft.Colors.with_opacity(0.22, CYAN),
+            border_side=ft.BorderSide(1, EDGE),
+            label_text_style=ft.TextStyle(color=TEXT),
+            shape=ft.RoundedRectangleBorder(radius=10),
+            check_color=CYAN,
+        ),
+        checkbox_theme=ft.CheckboxTheme(
+            fill_color=_states(CYAN, ft.Colors.TRANSPARENT),
+            check_color=NAVY,
+            border_side=ft.BorderSide(1.5, MUTED),
+            shape=ft.RoundedRectangleBorder(radius=4),
+        ),
+        switch_theme=ft.SwitchTheme(
+            thumb_color=_states(NAVY, MUTED),
+            track_color=_states(PULSE, FIELD),
+            track_outline_color=_states(PULSE, EDGE),
+        ),
+        slider_theme=ft.SliderTheme(
+            active_track_color=CYAN,
+            inactive_track_color=OUTLINE,
+            thumb_color=CYAN,
+            value_indicator_color=SURFACE_HI,
+        ),
+        dialog_theme=ft.DialogTheme(
+            bgcolor=SURFACE,
+            shape=ft.RoundedRectangleBorder(radius=22),
+            title_text_style=ft.TextStyle(color=TEXT, size=20, weight=ft.FontWeight.W_700),
+            content_text_style=ft.TextStyle(color=MUTED),
+            barrier_color=ft.Colors.with_opacity(0.7, NAVY),
+        ),
+        snackbar_theme=ft.SnackBarTheme(
+            bgcolor=SURFACE_HI,
+            content_text_style=ft.TextStyle(color=TEXT),
+            shape=ft.RoundedRectangleBorder(radius=RADIUS),
+        ),
+        time_picker_theme=ft.TimePickerTheme(
+            bgcolor=SURFACE,
+            dial_bgcolor=FIELD,
+            dial_hand_color=CYAN,
+            hour_minute_color=FIELD,
+            hour_minute_text_color=TEXT,
+            day_period_color=ft.Colors.with_opacity(0.22, CYAN),
+            entry_mode_icon_color=CYAN,
+            shape=ft.RoundedRectangleBorder(radius=22),
+        ),
+        list_tile_theme=ft.ListTileTheme(icon_color=CYAN, text_color=TEXT),
+        divider_theme=ft.DividerTheme(color=OUTLINE),
+        progress_indicator_theme=ft.ProgressIndicatorTheme(color=CYAN),
+        navigation_bar_theme=ft.NavigationBarTheme(
+            bgcolor=SURFACE, indicator_color=ft.Colors.with_opacity(0.22, CYAN)
         ),
     )
     page.theme = page.dark_theme
     page.padding = 0
+
+
+def text_field(**kwargs) -> ft.TextField:
+    """The app's text box: rounded, filled, quiet outline, cyan while typing.
+
+    Flet 1.0.5 has no global input theme, so every TextField is made here.
+    Callers can still override anything (e.g. ``expand``, ``password``).
+    """
+    style = dict(
+        border_radius=RADIUS,
+        border_width=1,
+        border_color=EDGE,
+        focused_border_color=CYAN,
+        focused_border_width=1.5,
+        filled=True,
+        fill_color=FIELD,
+        color=TEXT,
+        cursor_color=CYAN,
+        label_style=ft.TextStyle(color=MUTED),
+        hint_style=ft.TextStyle(color=MUTED),
+        content_padding=ft.Padding.symmetric(horizontal=14, vertical=14),
+    )
+    style.update(kwargs)
+    return ft.TextField(**style)
 
 
 def brand_mark(size: int = 40, glow: bool = False) -> ft.Container:

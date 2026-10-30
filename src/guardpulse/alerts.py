@@ -26,6 +26,7 @@ SETTING_LABELS = {
     "feed_facebook_reels": "Facebook Reels blocking",
     "feed_snapchat_spotlight": "Snapchat Spotlight blocking",
     "settings_guard": "the Settings guard",
+    "dork_guard": "search & proxy protection",
     "dns_filter": "the DNS filter",
     "security_overlay": "the security overlay",
     "uninstall_protection": "uninstall protection",
@@ -56,6 +57,8 @@ def describe(event: str, payload: dict) -> Alert:
         return Alert("Rule removed", f"{p.get('value', 'A site')} was removed from the {kind}.", "wastebasket", 3)
     if event == "app_unblocked":
         return Alert("App unblocked", f"{p.get('package', 'An app')} is no longer blocked.", "unlock", 3)
+    if event == "schedule_loosened":
+        return Alert("Schedule loosened", f"The '{p.get('name', '')}' app-lock schedule was made less strict.", "pencil2", 3)
     if event == "schedule_removed":
         return Alert("Schedule deleted", f"The '{p.get('name', '')}' app-lock schedule was deleted.", "wastebasket", 3)
     if event == "pin_changed":

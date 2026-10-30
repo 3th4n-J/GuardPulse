@@ -28,6 +28,7 @@ Block sites and apps, filter adult content with Cloudflare Family DNS, and put s
 | 📱 | **App blocking** | Block whole apps, with one-tap presets for TikTok, Instagram, Snapchat, Reddit, X, Telegram and more. |
 | 🎬 | **Short-video feeds** | Turn off YouTube Shorts, Instagram and Facebook Reels, and Snapchat Spotlight while keeping the rest of the app. |
 | ⏰ | **Scheduled app lock** | Lock chosen apps during bedtime, study or work hours, including windows that run past midnight. |
+| 🔎 | **Search & proxy protection** | Stops the usual "dorking" tricks: searching for a blocked site (`site:`, `cache:`, `inurl:` ...), viewing it through Google Translate, search-engine caches or web archives. |
 | 🛡️ | **Cloudflare Family DNS** | Every app's DNS goes through `1.1.1.3` / `1.0.0.3`, which filter adult content and malware. |
 | 🤝 | **Accountability partner** | Your partner's PIN is needed for anything that loosens protection. |
 | 🔑 | **Remote unlock codes** | Away from your partner? They read you a one-time 6-digit code from their authenticator app. |
@@ -106,6 +107,22 @@ For the strongest setup, turn on **Always-on VPN** for GuardPulse in Android's V
 > 🌐 **Browsers with their own "secure DNS".** Brave, Chrome, Edge ("Use secure DNS") and Firefox ("DNS over HTTPS") can send lookups to their own encrypted DNS provider, which would skip the filter. GuardPulse blocks those providers on purpose (Cloudflare Family's own DoH stays allowed). A browser *locked* to one of them can't look anything up, so it shows "DNS address could not be found". When that happens for a site that's actually fine, the overlay explains it and shows that browser's exact steps. The fix is to turn the browser's secure DNS **off** (or set it to *Use your current service provider*).
 
 > ⚠️ **Leave "Block connections without VPN" OFF.** GuardPulse's tunnel only carries DNS lookups; the rest of your traffic uses the normal network. That lockdown switch blocks every connection that doesn't go *through* the VPN, so the whole phone goes offline. The app shows a red warning if it's on. If the VPN is ever revoked, GuardPulse shows a "Protection is OFF" notification and queues a tamper alert for your partner.
+
+### Search & proxy protection
+
+On by default (**Settings -> Search & proxy protection**; switching it off needs the partner PIN). It closes the common ways around a blocked site:
+
+| Trick | What GuardPulse does |
+|---|---|
+| Searching for it: `site:reddit.com ...`, `cache:`, `inurl:`, or just naming the domain | The overlay reads the search on Google, Bing, DuckDuckGo, Brave Search, Yahoo, Yandex, Ecosia, Startpage and others, and closes the tab like a blocked site |
+| Google Translate as a proxy (`www-reddit-com.translate.goog`) | The real site is decoded from the name and blocked if it's on your list. For other sites, Cloudflare Family is asked about the **real** site, so adult sites can't sneak through as a translation |
+| Search caches, web archives and reader proxies (Google cache, Wayback Machine, archive.today/.ph/.is, 12ft.io, ...) | Blocked at DNS level. A whitelist entry you add still wins |
+
+Cloudflare Family also forces SafeSearch on Google, so image results stay filtered.
+
+### Editing schedules
+
+Tap the pencil on a schedule to change its name, days, times or apps. The same one-way rule applies: if every minute the old schedule was locking is still locked and no app was removed, the edit is **free**. Anything looser needs the partner PIN, and the partner is told.
 
 ### Uninstall + settings protection (phase 4)
 

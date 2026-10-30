@@ -48,6 +48,7 @@ class NativeBridge:
         self.service = None
         self.state: dict[str, Any] = {}
         self.installed_apps: list[dict[str, str]] = []
+        self.apps_tried = False  # installed-app list requested once already
         self.app_info: dict[str, Any] = {}
         self.icons: dict[str, str] = {}  # package -> base64 PNG, from this phone only
         self._no_icon: set[str] = set()
@@ -258,6 +259,7 @@ class NativeBridge:
             await self.refresh()
 
     async def load_installed_apps(self) -> list[dict[str, str]]:
+        self.apps_tried = True
         if self.service and not self.installed_apps:
             try:
                 self.installed_apps = await self.service.list_apps()

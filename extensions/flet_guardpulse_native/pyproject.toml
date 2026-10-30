@@ -1,6 +1,6 @@
 [project]
 name = "flet-guardpulse-native"
-version = "0.6.1"
+version = "0.7.0"
 description = "GuardPulse Android enforcement layer: DNS-filter VPN + security overlay (Kotlin) exposed as a Flet 1.0 service."
 authors = [{ name = "Ethan Johnston" }]
 requires-python = ">=3.10"

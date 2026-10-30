@@ -212,6 +212,60 @@ class DecisionTests(GuardTestCase):
         self.assertEqual(self.guard.decide("example.com"), "allow")
 
 
+class ScheduleEditTests(GuardTestCase):
+    WEEKDAYS, EVERY_DAY = 0b0011111, 0b1111111
+
+    def setUp(self):
+        super().setUp()
+        self.setup_partner()
+        self.s = self.guard.add_schedule("Bedtime", self.WEEKDAYS, 22 * 60, 6 * 60, ["a.b", "c.d"])
+
+    def edit(self, **kw):
+        s = self.s
+        args = dict(name=s.name, days=s.days, start_min=s.start_min, end_min=s.end_min, packages=list(s.packages))
+        args.update(kw)
+        self.s = self.guard.update_schedule(s.id, **args)  # next edit starts from this one
+        return self.s
+
+    def test_rename_is_free(self):
+        self.assertEqual(self.edit(name="Night").name, "Night")
+
+    def test_stricter_edits_are_free(self):
+        self.edit(days=self.EVERY_DAY)  # more days
+        self.edit(start_min=21 * 60)  # starts earlier
+        self.edit(end_min=7 * 60)  # ends later (overnight)
+        self.edit(packages=["a.b", "c.d", "e.f"])  # more apps
+        self.assertEqual(self.guard.history(1)[0]["authorised_by"], "none")
+
+    def test_looser_edits_need_partner(self):
+        for kw in (
+            dict(days=0b0001111),  # drop Friday
+            dict(start_min=23 * 60),  # starts later
+            dict(end_min=5 * 60),  # ends earlier
+            dict(packages=["a.b"]),  # drop an app
+            dict(start_min=9 * 60, end_min=17 * 60),  # moved to the daytime
+        ):
+            with self.assertRaises(Locked, msg=str(kw)):
+                self.edit(**kw)
+
+    def test_looser_edit_with_pin_alerts_partner(self):
+        self.guard.unlock(PIN)
+        self.edit(packages=["a.b"])
+        self.assertIn("schedule_loosened", [r["event"] for r in self.guard.pending_alerts()])
+
+    def test_edit_keeps_pause_state_and_policy_updates(self):
+        self.guard.unlock(PIN)
+        self.guard.set_schedule_enabled(self.s.id, False)
+        self.guard.lock()
+        self.edit(name="Night")  # renaming a paused schedule is still free
+        self.assertFalse(self.guard.schedules()[0].enabled)
+
+    def test_policy_reflects_edit(self):
+        self.edit(packages=["a.b", "c.d", "e.f"])
+        policy = json.loads((self.folder / "policy.json").read_text())
+        self.assertEqual(policy["schedules"][0]["packages"], ["a.b", "c.d", "e.f"])
+
+
 class ScheduleTests(unittest.TestCase):
     def test_daytime_window(self):
         s = Schedule(1, "Work", 0b0011111, 9 * 60, 17 * 60, ("a.b",), True)
@@ -294,6 +348,16 @@ class NativeGlueTests(GuardTestCase):
         self.guard.unlock(PIN)
         self.guard.authorise_uninstall_off()
         self.assertEqual(self.guard.history(1)[0]["action"], "uninstall.disabled")
+
+    def test_dork_guard_on_by_default_and_ratcheted(self):
+        self.setup_partner()
+        self.assertTrue(self.guard.setting("dork_guard"))
+        self.assertTrue(self.guard.policy()["settings"]["dork_guard"])  # reaches Kotlin
+        with self.assertRaises(Locked):
+            self.guard.set_setting("dork_guard", False)
+        self.guard.unlock(PIN)
+        self.guard.set_setting("dork_guard", False)
+        self.assertIn("protection_disabled", [r["event"] for r in self.guard.pending_alerts()])
 
     def test_settings_guard_toggle_ratchet(self):
         self.setup_partner()
