@@ -21,7 +21,8 @@
         </intent>
     </queries>
 
-    <application>
+    <!-- no Google Drive / adb backups: they'd carry seal.key and sync.key off the phone -->
+    <application android:allowBackup="false">
         <!-- download Google's QR scanner UI with the app instead of on first scan -->
         <meta-data
             android:name="com.google.mlkit.vision.DEPENDENCIES"

@@ -2,7 +2,7 @@
 
 A snapshot is plain JSON (before encryption):
 
-    {"v": 1, "device": "...", "at": ts,
+    {"v": 1, "device": "...", "at": ts, "rev": n, "lineage": [[rev, digest], ...],
      "rules": [[kind, value], ...], "apps": [[package, label], ...],
      "schedules": [{name, days, start_min, end_min, packages, enabled}, ...],
      "settings": {...}, "partner": {...} | null, "activity": [...]}
@@ -11,16 +11,25 @@ Merging compares each side with the last snapshot both phones agreed on
 ("base"). Changes from either side are combined; a removal only syncs if it
 happened on the other phone (where it already needed the partner PIN). When
 the same setting changed on both phones, the STRICTER value wins.
+
+``rev`` and ``lineage`` sit INSIDE the encryption: every upload lists the
+(rev, digest) of the copies it was built on. A phone only lets the cloud copy
+remove or loosen anything when that copy was built on top of what this phone
+last agreed on. An older copy put back in the cloud, or a split history, is
+combined fail-safe instead (nothing removed, no whitelist added).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 
-from ..guard import DEFAULT_SETTINGS, PROTECTIVE_FLAGS
+from ..guard import DEFAULT_SETTINGS, PROTECTIVE_FLAGS, Schedule, is_stricter_or_equal
 
 VERSION = 1
 ACTIVITY_TAIL = 200
+LOOSENING_KINDS = ("allow", "app_allow")  # rule kinds whose ADDITION loosens protection
+LINEAGE_KEEP = 50  # how many earlier copies an upload remembers being built on
 # settings that travel between phones (all of them today; kept explicit)
 SYNCED_SETTINGS = tuple(DEFAULT_SETTINGS)
 # partner fields that identify "the same partner/PIN" (counters and lockouts don't)
@@ -84,11 +93,72 @@ def is_blank(state: dict) -> bool:
     return not (s["rules"] or s["apps"] or s["schedules"] or s["partner"])
 
 
+def digest(snap: dict) -> str:
+    """Fingerprint of a snapshot's protected part (what lineage entries point at)."""
+    body = json.dumps(protected(snap), sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(body).hexdigest()[:32]
+
+
+def descends_from(remote: dict, rev: int, fingerprint: str) -> bool:
+    """Was ``remote`` built on top of the copy this phone last agreed on?"""
+    return [rev, fingerprint] in remote.get("lineage", [])
+
+
+def join_lineage(*lineages: list) -> list:
+    """Every (rev, digest) from the given lineages, oldest first, newest LINEAGE_KEEP kept."""
+    seen = {tuple(entry) for lineage in lineages for entry in lineage}
+    return [list(entry) for entry in sorted(seen)][-LINEAGE_KEEP:]
+
+
+# --- what a sync would loosen -------------------------------------------------------
+
+
+def loosened(before: dict, after: dict) -> list[str]:
+    """What going from ``before`` to ``after`` makes LESS strict, in plain words."""
+    b, a = protected(before), protected(after)
+    out = []
+    b_rules, a_rules = {tuple(r) for r in b["rules"]}, {tuple(r) for r in a["rules"]}
+    out += [f"{value} unblocked" for kind, value in sorted(b_rules - a_rules) if kind == "block"]
+    out += [f"keyword '{value}' removed" for kind, value in sorted(b_rules - a_rules) if kind == "keyword"]
+    out += [f"{value} whitelisted" for kind, value in sorted(a_rules - b_rules) if kind == "allow"]
+    out += [f"{value} always allowed" for kind, value in sorted(a_rules - b_rules) if kind == "app_allow"]
+    kept_apps = {package for package, _ in a["apps"]}
+    out += [f"{label} unblocked" for package, label in b["apps"] if package not in kept_apps]
+    for old in b["schedules"]:
+        if old not in a["schedules"] and not any(
+            _covers(old, new) for new in a["schedules"] if new["name"] == old["name"]
+        ):
+            out.append(f"'{old['name']}' schedule loosened or deleted")
+    bs, as_ = b["settings"], a["settings"]
+    out += [f"{key} switched off" for key in sorted(PROTECTIVE_FLAGS) if bs.get(key) is True and as_.get(key) is False]
+    if "unlock_minutes" in bs and "unlock_minutes" in as_ and int(as_["unlock_minutes"]) > int(bs["unlock_minutes"]):
+        out.append(f"unlock time lengthened to {as_['unlock_minutes']} minutes")
+    if any(bs.get(key) and key in as_ and bs[key] != as_[key] for key in ("ntfy_server", "ntfy_topic")):
+        out.append("alerts now go somewhere else")
+    if b["partner"] and a["partner"] and _identity(b["partner"]) != _identity(a["partner"]):
+        out.append("partner PIN or details changed")
+    return out
+
+
+def _covers(old: dict, new: dict) -> bool:
+    if old["enabled"] and not new["enabled"]:
+        return False
+    return is_stricter_or_equal(_as_schedule(old), _as_schedule(new))
+
+
+def _as_schedule(s: dict) -> Schedule:
+    return Schedule(0, s["name"], s["days"], s["start_min"], s["end_min"], tuple(s["packages"]), True)
+
+
 # --- merge ------------------------------------------------------------------------
 
 
 def merge(base: dict | None, local: dict, remote: dict) -> dict:
+    """Three-way merge. With no trusted ``base`` it's fail-safe: a union that removes
+    nothing and only takes whitelist / always-allow entries this phone already has."""
     b, l_, r = protected(base or EMPTY), protected(local), protected(remote)
+    if base is None:
+        r = dict(r, rules=[rule for rule in r["rules"] if rule[0] not in LOOSENING_KINDS])
     return {
         "rules": _merge_items(b["rules"], l_["rules"], r["rules"], key=tuple),
         "apps": _merge_apps(b["apps"], l_["apps"], r["apps"]),

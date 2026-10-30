@@ -623,7 +623,7 @@ class App:
     def _header(self) -> ft.Control:
         return ft.Row(
             [
-                theme.brand_mark(40),
+                ft.Image(src="icon.png", width=40, height=40, border_radius=10),
                 ft.Column(
                     [
                         ft.Text("GuardPulse", size=20, weight=ft.FontWeight.W_800, color=theme.TEXT),

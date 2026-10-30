@@ -191,34 +191,59 @@ class SyncManager:
         try:
             for _attempt in range(3):
                 session = yield from self._fresh(session)
-                blob, rev, update_time = yield self.firebase.get_state, (session,)
+                blob, _, update_time = yield self.firebase.get_state, (session,)
                 local = state.export(self.guard)
                 remote = crypto.open_(key, session.uid, blob) if blob else None
-                changed = False
+                base, base_rev, base_lineage = self._load_base()
+                remote_rev = int(remote.get("rev", 0)) if remote else 0
+                changed = rolled_back = adopting = False
                 if remote is not None:
                     self.guard.import_activity(remote.get("activity", []))
-                    base = self._load_base()
                     if base is None and state.is_blank(local):
                         merged = state.protected(remote)  # brand-new phone: take the account's state
-                    else:
+                        adopting = True
+                    elif base is not None and state.descends_from(remote, base_rev, state.digest(base)):
                         merged = state.merge(base, local, remote)
+                    else:
+                        # not built on what this phone last agreed on: an older copy put
+                        # back in the cloud, or a split history. Combine fail-safe.
+                        merged = state.merge(None, local, remote)
+                        rolled_back = (
+                            base is not None and remote_rev <= base_rev
+                            and state.digest(remote) != state.digest(base)
+                        )
+                    if rolled_back:
+                        self.guard.report_tamper(
+                            "An older synced copy was put back in the cloud. GuardPulse ignored "
+                            "anything it would have removed and restored the latest rules."
+                        )
                     if merged != state.protected(local):
-                        self.guard.apply_synced(merged)
+                        loosened = [] if adopting else state.loosened(local, merged)
+                        self.guard.apply_synced(merged, loosened=loosened)
                         changed = True
                     local = state.export(self.guard)
+                rev = max(base_rev, remote_rev) + 1
                 upload = dict(local)
                 upload["activity"] = _merge_activity(remote, local)
-                needs_push = remote is None or state.protected(upload) != state.protected(remote) or (
-                    {a["key"] for a in upload["activity"]} != {a["key"] for a in remote.get("activity", [])}
+                upload["rev"] = rev
+                upload["lineage"] = state.join_lineage(
+                    base_lineage, (remote or {}).get("lineage", []), [[rev, state.digest(upload)]]
+                )
+                needs_push = (
+                    remote is None or rolled_back or "lineage" not in remote
+                    or state.protected(upload) != state.protected(remote)
+                    or {a["key"] for a in upload["activity"]} != {a["key"] for a in remote.get("activity", [])}
                 )
                 if needs_push:
                     try:
                         yield self.firebase.put_state, (
-                            session, crypto.seal(key, session.uid, upload), rev + 1, update_time,
+                            session, crypto.seal(key, session.uid, upload), rev, update_time,
                         )
                     except Conflict:
                         continue  # someone else synced in between: pull again
-                self._save_base(state.protected(local))
+                    self._save_base(state.protected(local), rev, upload["lineage"])
+                else:
+                    self._save_base(state.protected(local), remote_rev, remote["lineage"])
                 self.guard.set_meta("sync_at", repr(self.guard.clock()))
                 self.last_error = ""
                 return changed
@@ -243,21 +268,24 @@ class SyncManager:
 
     # --- the agreed base -------------------------------------------------------------
 
-    def _load_base(self) -> dict | None:
-        """Last state both phones agreed on - sealed so it can't be edited to steer a merge."""
+    def _load_base(self) -> tuple[dict | None, int, list]:
+        """Last copy both phones agreed on: (state, rev, lineage). Sealed so it can't be
+        edited to steer a merge; rev -1 = not known (no base, or one from before v1.0)."""
         try:
             raw = json.loads((self.folder / BASE_FILE).read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return None
-        body = json.dumps(raw.get("state"), sort_keys=True).encode()
+            return None, -1, []
+        record = {k: raw.get(k) for k in ("state", "rev", "lineage") if k in raw}
+        body = json.dumps(record if "rev" in raw else raw.get("state"), sort_keys=True).encode()
         if not security.seal_ok(self.guard.keys.get_key(), body, raw.get("seal", "")):
-            return None  # tampered: fall back to the fail-safe union merge
-        return raw["state"]
+            return None, -1, []  # tampered: fall back to the fail-safe union merge
+        return raw["state"], int(raw.get("rev", -1)), raw.get("lineage", [])
 
-    def _save_base(self, snap: dict) -> None:
-        body = json.dumps(snap, sort_keys=True).encode()
+    def _save_base(self, snap: dict, rev: int, lineage: list) -> None:
+        record = {"state": snap, "rev": rev, "lineage": lineage}
+        body = json.dumps(record, sort_keys=True).encode()
         (self.folder / BASE_FILE).write_text(
-            json.dumps({"state": snap, "seal": security.seal(self.guard.keys.get_key(), body)}),
+            json.dumps(dict(record, seal=security.seal(self.guard.keys.get_key(), body))),
             encoding="utf-8",
         )
 
