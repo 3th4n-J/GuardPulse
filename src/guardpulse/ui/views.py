@@ -61,6 +61,7 @@ ACTION_LABELS = {
     "filter.enabled": ("DNS filter on", ft.Icons.VPN_LOCK_OUTLINED),
     "filter.disabled": ("DNS filter off", ft.Icons.POWER_SETTINGS_NEW),
     "overlay.setup_opened": ("Overlay setup opened", ft.Icons.LAYERS_OUTLINED),
+    "native.secure_dns_tip": ("Browser secure-DNS tip shown", ft.Icons.DNS_OUTLINED),
     "alerts.topic_created": ("Partner alerts set up", ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED),
     "alerts.topic_changed": ("Partner alert link changed", ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED),
     "alerts.test": ("Test alert sent", ft.Icons.SEND),

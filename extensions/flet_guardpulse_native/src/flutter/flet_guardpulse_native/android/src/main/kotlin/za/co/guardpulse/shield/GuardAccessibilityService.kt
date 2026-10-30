@@ -38,6 +38,7 @@ class GuardAccessibilityService : AccessibilityService() {
         private const val ESCAPE_WINDOW_MS = 2500L
         private const val SETTINGS_GRANT_MS = 90_000L
         private const val BROWSER_REFRESH_MS = 5 * 60_000L
+        private const val SECURE_DNS_TIP_EVERY_MS = 30 * 60_000L
         private const val MAX_NODES = 600
         private const val BLANK_PAGE = "about:blank"
 
@@ -239,7 +240,53 @@ class GuardAccessibilityService : AccessibilityService() {
         if (bar.isFocused) return // the user is typing, not viewing a page
         val host = Detectors.hostFromAddressBar(bar.text)
             ?.takeIf { Detectors.looksLikeDomain(it) } ?: return
-        if (policy.decide(host) == Decision.BLOCK) escapeSite(pkg, host, bar)
+        if (policy.decide(host) == Decision.BLOCK) {
+            escapeSite(pkg, host, bar)
+        } else {
+            maybeExplainSecureDns(pkg, host, root)
+        }
+    }
+
+    private val secureDnsTipShown = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /**
+     * A browser showing "DNS address could not be found" for a site that DOES
+     * resolve through GuardPulse is using its own encrypted DNS (Brave/Chrome
+     * "Use secure DNS", Firefox "DNS over HTTPS") pointed at a provider we block
+     * on purpose. Explain how to switch it off instead of leaving the user stuck.
+     * At most once per browser per 30 minutes.
+     */
+    private fun maybeExplainSecureDns(pkg: String, host: String, root: AccessibilityNodeInfo) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - (secureDnsTipShown[pkg] ?: -SECURE_DNS_TIP_EVERY_MS) < SECURE_DNS_TIP_EVERY_MS) return
+        if (overlay.showing || !Detectors.isDnsErrorPage(collectTexts(root))) return
+        secureDnsTipShown[pkg] = now // claim the slot before the lookup so events don't pile up
+        Thread {
+            val resolves = try {
+                java.net.InetAddress.getAllByName(host).isNotEmpty() // goes through our own filter
+            } catch (e: Exception) {
+                false
+            }
+            if (!resolves) {
+                secureDnsTipShown.remove(pkg) // a real dead/typo site - say nothing
+                return@Thread
+            }
+            main.post {
+                val label = try {
+                    packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+                } catch (e: Exception) {
+                    "this browser"
+                }
+                Store.event(this, "secure_dns_tip", label)
+                overlay.show(
+                    "tip:$pkg",
+                    "$label's secure DNS is blocked",
+                    "$host is fine, but $label is set to use its own DNS provider, which GuardPulse " +
+                        "blocks so browsers can't skip the filter.\n\n${Detectors.secureDnsSteps(pkg)}",
+                    "Got it",
+                ) { overlay.hide() }
+            }
+        }.start()
     }
 
     /**
