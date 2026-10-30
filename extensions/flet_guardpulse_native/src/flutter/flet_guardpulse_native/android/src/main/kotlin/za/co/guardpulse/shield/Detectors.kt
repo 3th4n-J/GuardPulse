@@ -100,6 +100,39 @@ object Detectors {
             else hostFromAddressBar(t)?.takeIf { looksLikeDomain(it) }
         }
 
+    // --- browser "secure DNS" -------------------------------------------------------
+
+    /** Error-page wording when a browser can't look a site up (Chromium family + Firefox). */
+    private val DNS_ERROR_MARKERS = listOf(
+        "dns_probe",
+        "err_name_not_resolved",
+        "dns address could not be found",
+        "server ip address could not be found",
+        "having trouble finding that site",
+    )
+
+    fun isDnsErrorPage(texts: Collection<String>): Boolean =
+        texts.any { t -> val l = t.lowercase(); DNS_ERROR_MARKERS.any { l.contains(it) } }
+
+    private val FIREFOX_FAMILY = setOf(
+        "org.mozilla.firefox", "org.mozilla.firefox_beta", "org.mozilla.fenix", "org.mozilla.focus",
+    )
+
+    /**
+     * Where a browser keeps its own encrypted-DNS switch. GuardPulse blocks the
+     * unfiltered DoH providers on purpose (otherwise any browser could skip the
+     * filter), so a browser locked to one of them can't look anything up.
+     */
+    fun secureDnsSteps(pkg: String): String = when {
+        pkg in FIREFOX_FAMILY ->
+            "Open Firefox ⋮ → Settings → Privacy and security → DNS over HTTPS, and choose Off (or Default protection)."
+        pkg == "com.sec.android.app.sbrowser" ->
+            "Open Samsung Internet ☰ → Settings → Privacy → Secure DNS, and turn it off."
+        else ->
+            "Open the browser's ⋮ → Settings → Privacy and security → Use secure DNS, and turn it off " +
+                "(or pick \"Use your current service provider\")."
+    }
+
     /** "m.reddit.com" yes; "v2.0" or "e.g" no - needs a letters-only TLD of 2+ chars. */
     fun looksLikeDomain(host: String): Boolean {
         val tld = host.substringAfterLast('.', "")

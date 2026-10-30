@@ -103,6 +103,8 @@ It only reads the foreground app's name, the browser's address bar and the label
 
 For the strongest setup, turn on **Always-on VPN** for GuardPulse in Android's VPN settings, so the filter starts at boot and comes back if it stops. The app reminds you and opens the screen for you.
 
+> 🌐 **Browsers with their own "secure DNS".** Brave, Chrome, Edge ("Use secure DNS") and Firefox ("DNS over HTTPS") can send lookups to their own encrypted DNS provider, which would skip the filter. GuardPulse blocks those providers on purpose (Cloudflare Family's own DoH stays allowed). A browser *locked* to one of them can't look anything up, so it shows "DNS address could not be found". When that happens for a site that's actually fine, the overlay explains it and shows that browser's exact steps. The fix is to turn the browser's secure DNS **off** (or set it to *Use your current service provider*).
+
 > ⚠️ **Leave "Block connections without VPN" OFF.** GuardPulse's tunnel only carries DNS lookups; the rest of your traffic uses the normal network. That lockdown switch blocks every connection that doesn't go *through* the VPN, so the whole phone goes offline. The app shows a red warning if it's on. If the VPN is ever revoked, GuardPulse shows a "Protection is OFF" notification and queues a tamper alert for your partner.
 
 ### Uninstall + settings protection (phase 4)
