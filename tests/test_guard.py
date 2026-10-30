@@ -135,7 +135,10 @@ class RatchetTests(GuardTestCase):
             lambda: self.guard.remove_schedule(sched.id),
             lambda: self.guard.set_setting("family_dns", False),
             lambda: self.guard.set_setting("unlock_minutes", 10),
-            lambda: self.guard.set_setting("alert_webhook_url", "https://n8n.example/hook"),
+            lambda: self.guard.set_setting("ntfy_topic", "guardpulse-somethingelse"),
+            lambda: self.guard.set_setting("ntfy_server", "https://ntfy.example.com"),
+            lambda: self.guard.new_alert_topic_now(),
+            lambda: self.guard.alert_subscribe_url(),
             lambda: self.guard.change_pin("7391"),
         ):
             with self.assertRaises(Locked):

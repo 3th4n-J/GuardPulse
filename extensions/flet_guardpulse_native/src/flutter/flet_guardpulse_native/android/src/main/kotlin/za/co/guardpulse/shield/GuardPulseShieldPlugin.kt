@@ -100,6 +100,14 @@ class GuardPulseShieldPlugin :
                 if (service != null) service.stopByApp() else Store.setOverlayWanted(context, false)
                 result.success(true)
             }
+            "flush_alerts" -> {
+                // the app passes the current ntfy target too, so a brand-new topic works
+                // before any service has reloaded the policy
+                val server = call.argument<String>("server")
+                val topic = call.argument<String>("topic")
+                if (!server.isNullOrBlank() && !topic.isNullOrBlank()) Store.setAlertTarget(context, server, topic)
+                background(result) { Alerts.flush(context) }
+            }
             "device_admin_active" -> result.success(isAdminActive())
             "request_device_admin" -> {
                 Store.setAdminWanted(context, true)

@@ -28,6 +28,19 @@ object Store {
     fun setOverlayWanted(ctx: Context, on: Boolean) =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("overlay_wanted", on).apply()
 
+    /** Where partner alerts go: cached from the last policy that passed its signature check. */
+    fun alertTarget(ctx: Context): Pair<String, String>? {
+        val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val topic = prefs.getString("ntfy_topic", null)?.takeIf { it.isNotBlank() } ?: return null
+        return (prefs.getString("ntfy_server", null) ?: "https://ntfy.sh") to topic
+    }
+
+    fun setAlertTarget(ctx: Context, server: String, topic: String) {
+        if (topic.isBlank()) return // never wipe a known topic with an empty one
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString("ntfy_server", server).putString("ntfy_topic", topic).apply()
+    }
+
     /** True while the user wants uninstall protection (device admin) on. */
     fun adminWanted(ctx: Context): Boolean =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("admin_wanted", false)

@@ -237,6 +237,14 @@ class NativeBridge:
             await self.service.stop_overlay()
             await self.refresh()
 
+    async def flush_alerts(self, server: str, topic: str) -> None:
+        """Nudge the Android layer to retry its queued tamper alerts."""
+        if self.service and topic:
+            try:
+                await self.service.flush_alerts(server, topic)
+            except Exception:  # noqa: BLE001 - retried on the next poll
+                pass
+
     async def enable_uninstall_protection(self) -> bool:
         if not self.service:
             return False

@@ -34,6 +34,9 @@ class Policy(
     val apps: Set<String> = emptySet(),
     val schedules: List<LockWindow> = emptyList(),
     private val flags: Map<String, Boolean> = emptyMap(),
+    /** Partner alerts: ntfy server + topic ("" until a partner is set up). */
+    val ntfyServer: String = "https://ntfy.sh",
+    val ntfyTopic: String = "",
 ) {
     val upstream: List<String> = if (familyDns) familyServers else PLAIN_DNS
 
@@ -131,6 +134,8 @@ class Policy(
                     )
                 },
                 flags = flags,
+                ntfyServer = settings.optString("ntfy_server", "https://ntfy.sh").ifBlank { "https://ntfy.sh" },
+                ntfyTopic = settings.optString("ntfy_topic", ""),
             )
         }
 
