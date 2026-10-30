@@ -75,6 +75,17 @@ CREATE TABLE IF NOT EXISTS outbox (
     sent_at  REAL
 );
 CREATE INDEX IF NOT EXISTS ix_outbox_pending ON outbox (sent_at) WHERE sent_at IS NULL;
+
+-- activity from this account's other phones (Phase 6 sync); never re-uploaded
+CREATE TABLE IF NOT EXISTS remote_activity (
+    key           TEXT PRIMARY KEY,                               -- "<device>:<audit id>"
+    device        TEXT NOT NULL,
+    at            REAL NOT NULL,
+    action        TEXT NOT NULL,
+    detail        TEXT NOT NULL DEFAULT '',
+    authorised_by TEXT NOT NULL DEFAULT 'none'
+);
+CREATE INDEX IF NOT EXISTS ix_remote_activity_at ON remote_activity (at DESC);
 """
 
 
