@@ -101,7 +101,9 @@ It only reads the foreground app's name, the browser's address bar and the label
 
 > **Sideloading on Android 13+:** Android hides accessibility for apps installed outside the Play Store until you allow it. Open **App info → ⋮ → Allow restricted settings**, then switch GuardPulse on under **Accessibility**. The app walks you through this.
 
-For the strongest setup, turn on **Always-on VPN** and **Block connections without VPN** for GuardPulse in Android's VPN settings. The app reminds you and opens the screen for you. If the VPN is ever revoked, GuardPulse shows a "Protection is OFF" notification and queues a tamper alert for your partner.
+For the strongest setup, turn on **Always-on VPN** for GuardPulse in Android's VPN settings, so the filter starts at boot and comes back if it stops. The app reminds you and opens the screen for you.
+
+> ⚠️ **Leave "Block connections without VPN" OFF.** GuardPulse's tunnel only carries DNS lookups; the rest of your traffic uses the normal network. That lockdown switch blocks every connection that doesn't go *through* the VPN, so the whole phone goes offline. The app shows a red warning if it's on. If the VPN is ever revoked, GuardPulse shows a "Protection is OFF" notification and queues a tamper alert for your partner.
 
 ### Uninstall + settings protection (phase 4)
 

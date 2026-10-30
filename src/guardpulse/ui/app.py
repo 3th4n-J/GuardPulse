@@ -513,6 +513,7 @@ class App:
             "overlay_wanted",
             "device_admin_active",
             "device_admin_wanted",
+            "lockdown",
         )
         before = {k: self.native.state.get(k) for k in keys}
         await self.native.refresh()

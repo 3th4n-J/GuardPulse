@@ -156,6 +156,22 @@ class NativeBridge:
             )
         return None
 
+    def lockdown_warning(self) -> str | None:
+        """Android's "Block connections without VPN" breaks a DNS-only VPN.
+
+        GuardPulse's tunnel carries DNS lookups only; everything else uses the
+        normal network. Lockdown blocks all traffic that doesn't go *through* the
+        VPN, so lookups work but nothing can connect - the whole phone goes offline.
+        """
+        if self.filter_running and self.state.get("lockdown"):
+            return (
+                "This setting stops ALL internet while GuardPulse's filter is on (it only "
+                "filters lookups; the rest of your traffic uses the normal network). In "
+                "Android's VPN settings tap the gear next to GuardPulse and switch it off. "
+                "Keep 'Always-on VPN' on."
+            )
+        return None
+
     @property
     def needs_always_on(self) -> bool:
         return self.filter_running and not self.state.get("always_on")
