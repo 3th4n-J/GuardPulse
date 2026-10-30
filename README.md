@@ -33,21 +33,9 @@ Making protection stricter is always free. Making it looser always needs your pa
 
 <div align="center">
 
-**The app**
-
-| Welcome | Home | Blocked sites | Keywords |
-|:---:|:---:|:---:|:---:|
-| <img src="docs/screenshots/onboarding.png" width="180" alt="Welcome screen"/> | <img src="docs/screenshots/home.png" width="180" alt="Home"/> | <img src="docs/screenshots/sites.png" width="180" alt="Blocked sites"/> | <img src="docs/screenshots/keywords.png" width="180" alt="Keyword blocking"/> |
-
-| Apps | Schedules & always allow | Settings | Sync across phones |
-|:---:|:---:|:---:|:---:|
-| <img src="docs/screenshots/apps.png" width="180" alt="Apps"/> | <img src="docs/screenshots/schedule.png" width="180" alt="Schedules and always-allowed apps"/> | <img src="docs/screenshots/settings.png" width="180" alt="Settings"/> | <img src="docs/screenshots/sync.png" width="180" alt="Sync across phones"/> |
-
-**Protection in action**
-
-| Site blocked | Search blocked | Settings guard | Partner's alerts (ntfy) |
-|:---:|:---:|:---:|:---:|
-| <img src="docs/screenshots/site-blocked.png" width="180" alt="Blocked site overlay in a browser"/> | <img src="docs/screenshots/search-blocked.png" width="180" alt="Keyword search blocked"/> | <img src="docs/screenshots/settings-guard.png" width="180" alt="Partner PIN prompt over Android Settings"/> | <img src="docs/screenshots/partner-alerts.png" width="180" alt="Alerts on the partner's phone in ntfy"/> |
+| Home | Sites | Apps | Schedule | Settings |
+|:---:|:---:|:---:|:---:|:---:|
+| <img src="docs/screenshots/home.png" width="160" alt="Home"/> | <img src="docs/screenshots/sites.png" width="160" alt="Sites"/> | <img src="docs/screenshots/apps.png" width="160" alt="Apps"/> | <img src="docs/screenshots/schedule.png" width="160" alt="Schedule"/> | <img src="docs/screenshots/settings.png" width="160" alt="Settings"/> |
 
 </div>
 
