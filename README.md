@@ -11,9 +11,31 @@ Block sites and apps, filter adult content with Cloudflare Family DNS, and put s
 ![Python](https://img.shields.io/badge/Python-3.12-14B8A6?style=for-the-badge&logo=python&logoColor=white)
 ![Android](https://img.shields.io/badge/Android-only-34D399?style=for-the-badge&logo=android&logoColor=white)
 ![Price](https://img.shields.io/badge/Price-free%20forever-06122B?style=for-the-badge)
-![Status](https://img.shields.io/badge/version-1.0.0-34D399?style=for-the-badge)
+[![Version](https://img.shields.io/badge/version-1.0.1-34D399?style=for-the-badge)](https://github.com/3th4n-J/GuardPulse/releases/latest)
 
-[Features](#-features) · [How it works](#-how-it-works) · [Roadmap](#-roadmap) · [Getting started](#-getting-started) · [Security model](#-security-model) · [FAQ](#-faq)
+**[⬇️ Download the latest APK](https://github.com/3th4n-J/GuardPulse/releases/latest)**
+
+[Screenshots](#-screenshots) · [Features](#-features) · [How it works](#-how-it-works) · [Roadmap](#-roadmap) · [Getting started](#-getting-started) · [Security model](#-security-model) · [FAQ](#-faq)
+
+</div>
+
+---
+
+## 🛡️ Overview
+
+**GuardPulse** helps you keep the commitments you've made about what you look at. It blocks the sites, searches and apps you choose, filters adult content for every app with Cloudflare Family DNS, and hands the "off switch" to an **accountability partner** you trust.
+
+Making protection stricter is always free. Making it looser always needs your partner's PIN, and your partner hears about it on their phone straight away. It's free, has no ads, and your rules stay on your phone (or end-to-end encrypted between your own phones if you turn on sync).
+
+---
+
+## 📸 Screenshots
+
+<div align="center">
+
+| Home | Sites | Apps | Schedule | Settings |
+|:---:|:---:|:---:|:---:|:---:|
+| <img src="docs/screenshots/home.png" width="160" alt="Home"/> | <img src="docs/screenshots/sites.png" width="160" alt="Sites"/> | <img src="docs/screenshots/apps.png" width="160" alt="Apps"/> | <img src="docs/screenshots/schedule.png" width="160" alt="Schedule"/> | <img src="docs/screenshots/settings.png" width="160" alt="Settings"/> |
 
 </div>
 
@@ -158,6 +180,8 @@ The PIN is checked **on the device, while the app is closed** — the native lay
 
 When your partner is set up, GuardPulse creates a private, unguessable alert channel on [ntfy.sh](https://ntfy.sh). Your partner installs the free **ntfy** app (Android/iOS), scans the QR code GuardPulse shows, and taps Subscribe. That's the whole setup: no account, no server, no password on your phone.
 
+> **Subscribing by hand?** In the ntfy app tap **+**, enter only the topic name (`guardpulse-...`, the last part of the link) and leave **Use another server** off. Pasting the whole `https://ntfy.sh/...` link as the server makes ntfy ask for the topic twice, which fails with "404" or "WebSocket not supported". To give it a friendly name, use **⋮ → Subscription settings → Display name**. Don't rename the topic itself: its randomness is what keeps the alerts private.
+
 | Your partner hears about | Sent by |
 |---|---|
 | Unlocks with the PIN or authenticator code, repeated wrong PINs | the app |
@@ -199,8 +223,10 @@ Sign in with Google on each phone and they keep the same rules, blocked apps, sc
 - [x] **Phase 4: Uninstall + settings protection.** Device Admin blocks uninstalling GuardPulse, and the overlay covers Android's Settings/installer screens that act on GuardPulse (uninstall, force stop, clear storage, deactivate device admin, disable) with a partner-PIN prompt. The native layer verifies the PIN offline (PBKDF2, from an HMAC-sealed file) so it works while the app is closed. Switching either off outside the app raises a tamper alert.
 - [x] **Phase 5: Partner alerts.** Free push alerts to the partner's phone through [ntfy](https://ntfy.sh): no account, no server, no password stored on the phone. Tamper alerts are sent straight from the Android layer the moment they happen, and everything is queued and retried while offline. The site overlay also now works in **any** browser.
 - [ ] **Later (optional): "phone went quiet" alert.** Nothing on the phone can report its own uninstall or factory reset. A free [Healthchecks.io](https://healthchecks.io) heartbeat could notice the silence and tell the partner.
-- [x] **v1.0.0:** keyword blocking, "always allow" apps, sync replay protection, tighter Firestore rules, no Android backups, collapsible Settings
 - [x] **Phase 6: Google sign-in + sync.** Sign in with Google to keep rules, schedules, partner/PIN and activity the same on every phone. Firebase's free Spark plan, end-to-end encrypted (AES-256-GCM) with a key that never leaves your phones. New phones pair by QR code, and showing that code needs the partner PIN. Needs the one-time Firebase setup below.
+
+- [x] **v1.0.0:** keyword blocking, "always allow" apps, sync replay protection, tighter Firestore rules, no Android backups, collapsible Settings
+- [x] **v1.0.1:** button and hint text fits on narrow phones and large system fonts; every Settings group starts collapsed
 
 ## 🚀 Getting started
 
@@ -211,7 +237,7 @@ uv venv .venv --python 3.12
 ```
 
 ```bash
-uv pip install --python .venv/Scripts/python.exe "flet[all]==1.0.5" "segno==1.6.6" -e extensions/flet_guardpulse_native
+uv pip install --python .venv/Scripts/python.exe "flet[all]==1.0.5" "segno==1.6.6" "cryptography==48.0.0" -e extensions/flet_guardpulse_native
 ```
 
 **Run on desktop** (hot reload):
@@ -303,7 +329,7 @@ tests/test_guard.py               # engine + native-glue tests
 <details>
 <summary><b>Is it really free?</b></summary>
 
-Yes. No subscriptions, no paywalled features, no ads, and no accounts.
+Yes. No subscriptions, no paywalled features and no ads. You don't need an account either: Google sign-in is only used if you turn on sync between your own phones, and that runs on Firebase's free plan.
 </details>
 
 <details>
@@ -327,5 +353,6 @@ Google closely restricts apps that combine Accessibility and VPN permissions. Re
 ---
 
 <div align="center">
-<sub>Built with <a href="https://flet.dev">Flet</a> · DNS filtering by <a href="https://one.one.one.one/family/">Cloudflare 1.1.1.1 for Families</a></sub>
+<sub>Built by Ethan with ❤️ · <a href="mailto:ethan@s-techsolutions.co.za">ethan@s-techsolutions.co.za</a></sub><br/>
+<sub>Built with <a href="https://flet.dev">Flet</a> · DNS filtering by <a href="https://one.one.one.one/family/">Cloudflare 1.1.1.1 for Families</a> · Alerts by <a href="https://ntfy.sh">ntfy</a></sub>
 </div>
