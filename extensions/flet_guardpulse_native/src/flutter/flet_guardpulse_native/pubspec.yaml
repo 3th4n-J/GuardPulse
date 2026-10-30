@@ -1,6 +1,6 @@
 name: flet_guardpulse_native
 description: GuardPulse enforcement layer (DNS-filter VPN) as a Flet service
-version: 0.7.0
+version: 0.7.1
 publish_to: none
 
 environment:
