@@ -37,6 +37,10 @@ class Policy(
     /** Partner alerts: ntfy server + topic ("" until a partner is set up). */
     val ntfyServer: String = "https://ntfy.sh",
     val ntfyTopic: String = "",
+    /** Blocked search keywords, already normalised by Python ("free porn"). */
+    val keywords: List<String> = emptyList(),
+    /** Apps that app blocks and schedules never cover (Bible, banking, phone...). */
+    val alwaysAllow: Set<String> = emptySet(),
 ) {
     val upstream: List<String> = if (familyDns) familyServers else PLAIN_DNS
 
@@ -48,7 +52,15 @@ class Policy(
      * ``mondayIndex`` is 0 for Monday like Python's ``weekday()``.
      */
     fun appBlocked(pkg: String, mondayIndex: Int, minute: Int): Boolean =
-        pkg in apps || schedules.any { pkg in it.packages && it.activeAt(mondayIndex, minute) }
+        pkg !in alwaysAllow &&
+            (pkg in apps || schedules.any { pkg in it.packages && it.activeAt(mondayIndex, minute) })
+
+    /** The first blocked keyword in ``text`` (punctuation counts as a space), mirrors guard.keyword_in. */
+    fun keywordIn(text: String): String? {
+        if (keywords.isEmpty()) return null
+        val flat = " " + text.lowercase().replace(NOT_WORD, " ").trim() + " "
+        return keywords.firstOrNull { flat.contains(it) }
+    }
 
     fun decide(rawHost: String): Decision {
         val host = rawHost.trimEnd('.').lowercase()
@@ -58,7 +70,10 @@ class Policy(
             // Google Translate as a proxy: www-reddit-com.translate.goog serves reddit.com
             proxiedHost(host)?.let { inner -> if (decideRules(inner) == Decision.BLOCK) return Decision.BLOCK }
         }
-        return decideRules(host)
+        val ruled = decideRules(host)
+        // a site whose name contains a blocked keyword (free-porn-site.com)
+        if (ruled == Decision.DEFAULT && keywordIn(host) != null) return Decision.BLOCK
+        return ruled
     }
 
     private fun decideRules(host: String): Decision {
@@ -72,6 +87,7 @@ class Policy(
     companion object {
         val FAMILY_DNS = listOf("1.1.1.3", "1.0.0.3")
         val PLAIN_DNS = listOf("1.1.1.1", "1.0.0.1")
+        private val NOT_WORD = Regex("[^0-9a-z\u00c0-\uffff]+")
 
         /** Used before the first policy loads or when the signature is bad: filter, block nothing extra. */
         val SAFE_DEFAULT = Policy(emptyList(), emptyList(), true, FAMILY_DNS)
@@ -191,6 +207,8 @@ class Policy(
                 flags = flags,
                 ntfyServer = settings.optString("ntfy_server", "https://ntfy.sh").ifBlank { "https://ntfy.sh" },
                 ntfyTopic = settings.optString("ntfy_topic", ""),
+                keywords = root.optJSONArray("keywords").toStrings(),
+                alwaysAllow = root.optJSONArray("always_allow").toStrings(lower = false).toSet(),
             )
         }
 

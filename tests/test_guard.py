@@ -437,5 +437,73 @@ class NativeGlueTests(GuardTestCase):
         self.assertIsNone(bridge.private_dns_warning())
 
 
+class KeywordAndAlwaysAllowTests(GuardTestCase):
+    def test_keyword_is_normalised_and_free_to_add(self):
+        self.setup_partner()
+        self.guard.lock()
+        self.assertEqual(self.guard.add_keyword("  Free   PORN! ").value, "free porn")
+        self.assertEqual(self.guard.keywords(), ["free porn"])
+        with self.assertRaises(GuardError):
+            self.guard.add_keyword("ab")
+
+    def test_keyword_blocks_site_names_but_whitelist_wins(self):
+        self.guard.add_keyword("casino")
+        self.assertEqual(self.guard.decide("best-casino-online.com"), "block")
+        self.assertEqual(self.guard.decide("example.com"), "default")
+        self.guard.add_allow("casino-history.org")  # no partner yet: free
+        self.assertEqual(self.guard.decide("casino-history.org"), "allow")
+
+    def test_removing_keyword_needs_partner_and_alerts(self):
+        self.setup_partner()
+        self.guard.lock()
+        rule = self.guard.add_keyword("casino")
+        with self.assertRaises(Locked):
+            self.guard.remove_rule(rule.id)
+        self.guard.unlock(PIN)
+        self.guard.remove_rule(rule.id)
+        self.assertIn("rule_removed", [r["event"] for r in self.guard.pending_alerts()])
+
+    def test_policy_carries_keywords_and_always_allow(self):
+        self.guard.add_keyword("casino")
+        self.guard.add_always_allow("com.bible.app", "Bible")
+        policy = self.guard.policy()
+        self.assertEqual(policy["keywords"], ["casino"])
+        self.assertEqual(policy["always_allow"], ["com.bible.app"])
+
+    def test_always_allow_needs_partner_and_beats_schedules(self):
+        self.setup_partner()
+        self.guard.lock()
+        with self.assertRaises(Locked):
+            self.guard.add_always_allow("com.bible.app", "Bible")
+        self.guard.add_schedule("All day", 0b1111111, 0, 1439, ["com.bible.app"])
+        self.guard.add_app("com.bible.app", "Bible")
+        self.assertTrue(self.guard.is_app_blocked("com.bible.app"))
+        self.guard.unlock(PIN)
+        rule = self.guard.add_always_allow("com.bible.app", "Bible")
+        self.guard.lock()
+        self.assertFalse(self.guard.is_app_blocked("com.bible.app"))
+        self.assertIn("app_always_allowed", [r["event"] for r in self.guard.pending_alerts()])
+        self.guard.remove_rule(rule.id)  # stricter again: no PIN needed
+        self.assertTrue(self.guard.is_app_blocked("com.bible.app"))
+
+    def test_old_database_migrates_without_tamper(self):
+        self.guard.add_block("reddit.com")
+        self.guard.conn.close()
+        conn = sqlite3.connect(self.folder / "guardpulse.db")
+        conn.executescript(
+            "BEGIN; CREATE TABLE r1 (id INTEGER PRIMARY KEY,"
+            " kind TEXT NOT NULL CHECK (kind IN ('block', 'allow')), value TEXT NOT NULL,"
+            " created_at REAL NOT NULL, UNIQUE (kind, value));"
+            " INSERT INTO r1 SELECT * FROM rules; DROP TABLE rules; ALTER TABLE r1 RENAME TO rules;"
+            " UPDATE meta SET value = '1' WHERE key = 'schema_version'; COMMIT;"
+        )
+        conn.close()
+        self.guard = self.make()
+        self.assertFalse(self.guard.tampered)
+        self.assertEqual(self.guard.meta("schema_version"), "2")
+        self.assertEqual([r.value for r in self.guard.rules("block")], ["reddit.com"])
+        self.guard.add_keyword("casino")  # new kinds now fit
+
+
 if __name__ == "__main__":
     unittest.main()

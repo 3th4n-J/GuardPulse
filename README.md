@@ -11,7 +11,7 @@ Block sites and apps, filter adult content with Cloudflare Family DNS, and put s
 ![Python](https://img.shields.io/badge/Python-3.12-14B8A6?style=for-the-badge&logo=python&logoColor=white)
 ![Android](https://img.shields.io/badge/Android-only-34D399?style=for-the-badge&logo=android&logoColor=white)
 ![Price](https://img.shields.io/badge/Price-free%20forever-06122B?style=for-the-badge)
-![Status](https://img.shields.io/badge/status-phase%206%20of%206-FBBF24?style=for-the-badge)
+![Status](https://img.shields.io/badge/version-1.0.0-34D399?style=for-the-badge)
 
 [Features](#-features) · [How it works](#-how-it-works) · [Roadmap](#-roadmap) · [Getting started](#-getting-started) · [Security model](#-security-model) · [FAQ](#-faq)
 
@@ -25,9 +25,11 @@ Block sites and apps, filter adult content with Cloudflare Family DNS, and put s
 |---|---|---|
 | 🚫 | **Website blacklist** | Block any domain and all of its sub-domains. Paste a full link and GuardPulse works out the domain. |
 | ✅ | **Website whitelist** | Always allow specific sites, even inside a blocked domain. The most specific rule wins. |
+| 🔤 | **Keyword blocking** | Any search containing a blocked word or phrase is closed in every browser and search engine, and any site with it in its name is blocked at DNS level. |
 | 📱 | **App blocking** | Block whole apps, with one-tap presets for TikTok, Instagram, Snapchat, Reddit, X, Telegram and more. |
 | 🎬 | **Short-video feeds** | Turn off YouTube Shorts, Instagram and Facebook Reels, and Snapchat Spotlight while keeping the rest of the app. |
 | ⏰ | **Scheduled app lock** | Lock chosen apps during bedtime, study or work hours, including windows that run past midnight. |
+| 🙏 | **Always allow** | Important apps (Bible, banking, phone, maps) that no app block or schedule can lock. |
 | 🔎 | **Search & proxy protection** | Stops the usual "dorking" tricks: searching for a blocked site (`site:`, `cache:`, `inurl:` ...), viewing it through Google Translate, search-engine caches or web archives. |
 | 🛡️ | **Cloudflare Family DNS** | Every app's DNS goes through `1.1.1.3` / `1.0.0.3`, which filter adult content and malware. |
 | 🤝 | **Accountability partner** | Your partner's PIN is needed for anything that loosens protection. |
@@ -44,8 +46,9 @@ Making protection **stricter is always free**. Making it **looser always needs y
 
 | Free, any time | Needs the partner PIN or code |
 |---|---|
-| Block a site or app | Whitelist a site |
-| Add a schedule | Delete any block, app or whitelist entry |
+| Block a site, keyword or app | Whitelist a site, or always allow an app |
+| Add a schedule | Delete any block, keyword, app or whitelist entry |
+| Take an app off "always allow" | |
 | Resume a paused schedule | Pause or delete a schedule |
 | Turn a protection **on** | Turn a protection **off** |
 | Shorten the unlock window | Lengthen the unlock window |
@@ -120,6 +123,19 @@ On by default (**Settings -> Search & proxy protection**; switching it off needs
 
 Cloudflare Family also forces SafeSearch on Google, so image results stay filtered.
 
+### Keyword blocking
+
+**Sites → Keywords.** Add a word or phrase (3-40 characters; punctuation and case don't matter, so `Free  Casino!` is stored as `free casino`). Then:
+
+- a search containing it, on any search engine in any browser, is covered and the tab closed, just like a blocked site;
+- any site with it in its name (`best-casino-online.com`) is blocked by the DNS filter, in every app. A whitelist entry still wins.
+
+Keywords match inside words too, so pick them with care: `sex` would also catch `essex`.
+
+### Always allow
+
+**Apps (or Schedule) → Always allowed.** Apps you need no matter what, such as your Bible, banking apps, the phone dialer or maps. App blocks and schedules never cover them, and they aren't offered in the pickers. Adding one needs the partner PIN and your partner is told; taking one off is free.
+
 ### Editing schedules
 
 Tap the pencil on a schedule to change its name, days, times or apps. The same one-way rule applies: if every minute the old schedule was locking is still locked and no app was removed, the edit is **free**. Anything looser needs the partner PIN, and the partner is told.
@@ -158,6 +174,8 @@ Sign in with Google on each phone and they keep the same rules, blocked apps, sc
 - **End-to-end encrypted.** Everything is sealed on the phone with AES-256-GCM using a random key that only your phones hold. Firebase stores one unreadable blob per account; even the project owner can't read it, and an edited blob fails to open.
 - **Adding a phone.** On a synced phone: **Settings → Sync → Add another phone** (needs the partner PIN), which shows a QR code. On the new phone: sign in with the same Google account and tap **Scan QR**. The QR holds the key, so it's only ever shown on screen.
 - **Merging is fail-safe.** Changes from both phones are combined. A removal only syncs if it was approved with the PIN on the phone where it happened, and when both phones changed the same setting, the **stricter** value wins.
+- **No rolling back.** Each upload carries a version number and the list of copies it was built on, both *inside* the encryption. A phone only lets the cloud copy remove or loosen anything when that copy was built on top of what the phone last agreed on. Putting an older copy back in the cloud is detected: nothing is removed, the latest rules are restored, and the partner gets a tamper alert.
+- **Every loosening is reported.** If a sync removes a block or keyword, whitelists a site, always-allows an app or switches a protection off on this phone, it goes in the activity log and the partner gets an alert.
 - **Free.** Only Firebase Authentication and Firestore on the Spark plan are used. No Cloud Functions, no billing account.
 - Turning sync off on a phone needs the partner PIN.
 
@@ -181,6 +199,7 @@ Sign in with Google on each phone and they keep the same rules, blocked apps, sc
 - [x] **Phase 4: Uninstall + settings protection.** Device Admin blocks uninstalling GuardPulse, and the overlay covers Android's Settings/installer screens that act on GuardPulse (uninstall, force stop, clear storage, deactivate device admin, disable) with a partner-PIN prompt. The native layer verifies the PIN offline (PBKDF2, from an HMAC-sealed file) so it works while the app is closed. Switching either off outside the app raises a tamper alert.
 - [x] **Phase 5: Partner alerts.** Free push alerts to the partner's phone through [ntfy](https://ntfy.sh): no account, no server, no password stored on the phone. Tamper alerts are sent straight from the Android layer the moment they happen, and everything is queued and retried while offline. The site overlay also now works in **any** browser.
 - [ ] **Later (optional): "phone went quiet" alert.** Nothing on the phone can report its own uninstall or factory reset. A free [Healthchecks.io](https://healthchecks.io) heartbeat could notice the silence and tell the partner.
+- [x] **v1.0.0:** keyword blocking, "always allow" apps, sync replay protection, tighter Firestore rules, no Android backups, collapsible Settings
 - [x] **Phase 6: Google sign-in + sync.** Sign in with Google to keep rules, schedules, partner/PIN and activity the same on every phone. Firebase's free Spark plan, end-to-end encrypted (AES-256-GCM) with a key that never leaves your phones. New phones pair by QR code, and showing that code needs the partner PIN. Needs the one-time Firebase setup below.
 
 ## 🚀 Getting started
@@ -274,7 +293,8 @@ tests/test_guard.py               # engine + native-glue tests
 | **Remote codes** | Standard RFC 6238 TOTP (6 digits, 30 s, ±1 step for clock drift). Each code works once. |
 | **DB tampering** | Rules, apps, schedules, settings and partner credentials are sealed with HMAC-SHA256. A mismatch flags the app, queues an alert, and only the partner can clear the warning. |
 | **Policy hand-off** | The `policy.json` file the native services read is signed with the same key. The Kotlin filter verifies the signature before using any rule, keeps the last good policy if the check fails, and reports the tampering. |
-| **Data location** | App-private storage (`FLET_APP_STORAGE_DATA`), which other apps can't read without root. |
+| **Data location** | App-private storage (`FLET_APP_STORAGE_DATA`), which other apps can't read without root. Android backups are switched off, so the signing and sync keys never go to Google Drive or `adb backup`. |
+| **Sync** | AES-256-GCM, end to end, bound to the Google account. Versions and history are inside the encryption, so old copies can't be replayed. Firestore rules allow one size-capped document per account, readable and writable only by that account. |
 
 > **Why not an "encrypted SQLite"?** SQLCipher isn't available for Python on Android. The real risk is that someone *changes* the rules, not that they *read* them, so GuardPulse signs the data instead of encrypting it. Moving the signing key into the Android Keystore is planned.
 

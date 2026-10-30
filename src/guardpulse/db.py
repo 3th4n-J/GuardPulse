@@ -6,7 +6,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2: rules also hold search keywords + always-allowed apps
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS meta (
 
 CREATE TABLE IF NOT EXISTS rules (
     id         INTEGER PRIMARY KEY,
-    kind       TEXT NOT NULL CHECK (kind IN ('block', 'allow')),
+    kind       TEXT NOT NULL CHECK (kind IN ('block', 'allow', 'keyword', 'app_allow')),
     value      TEXT NOT NULL,
     created_at REAL NOT NULL,
     UNIQUE (kind, value)
@@ -109,4 +109,28 @@ def connect(path: Path) -> sqlite3.Connection:
         conn.execute(
             "INSERT INTO meta (key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),)
         )
+    elif int(row["value"]) < 2:
+        _migrate_to_2(conn)
     return conn
+
+
+def _migrate_to_2(conn: sqlite3.Connection) -> None:
+    """Widen the rules.kind CHECK. Rows are copied as-is, so the integrity seal stays valid."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "CREATE TABLE rules_v2 ("
+            " id INTEGER PRIMARY KEY,"
+            " kind TEXT NOT NULL CHECK (kind IN ('block', 'allow', 'keyword', 'app_allow')),"
+            " value TEXT NOT NULL, created_at REAL NOT NULL, UNIQUE (kind, value))"
+        )
+        conn.execute(
+            "INSERT INTO rules_v2 (id, kind, value, created_at) SELECT id, kind, value, created_at FROM rules"
+        )
+        conn.execute("DROP TABLE rules")
+        conn.execute("ALTER TABLE rules_v2 RENAME TO rules")
+        conn.execute("UPDATE meta SET value = '2' WHERE key = 'schema_version'")
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise

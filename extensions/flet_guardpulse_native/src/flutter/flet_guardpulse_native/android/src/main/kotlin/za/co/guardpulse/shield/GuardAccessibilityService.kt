@@ -241,10 +241,20 @@ class GuardAccessibilityService : AccessibilityService() {
         val raw = bar.text?.toString() ?: return
         val host = Detectors.hostFromAddressBar(raw)?.takeIf { Detectors.looksLikeDomain(it) }
 
+        // a search (or page address) containing a blocked keyword
+        val query = Detectors.searchQuery(raw)
+        if (policy.keywordIn(query) != null || policy.keywordIn(raw) != null) {
+            escapeSite(
+                pkg, host ?: "that search", bar,
+                title = "Search blocked", message = "That search contains a blocked keyword.",
+            )
+            return
+        }
+
         // dorking: a search naming a blocked site ("site:reddit.com ...") - checked when
         // the bar shows a search engine, or the search terms themselves (no host)
         if (policy.flag("dork_guard") && (host == null || Detectors.isSearchHost(host))) {
-            val target = Detectors.domainsInQuery(Detectors.searchQuery(raw))
+            val target = Detectors.domainsInQuery(query)
                 .firstOrNull { policy.decide(it) == Decision.BLOCK }
             if (target != null) {
                 escapeSite(pkg, target, bar, title = "Search blocked", message = "Searching for $target isn't allowed.")

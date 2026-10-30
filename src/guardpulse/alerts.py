@@ -52,6 +52,11 @@ def describe(event: str, payload: dict) -> Alert:
         return Alert("Wrong PIN entered", f"{n} wrong PIN / code attempts in a row.", "warning", 4)
     if event == "whitelisted":
         return Alert("Site whitelisted", f"{p.get('value', 'A site')} was added to the allowed list.", "white_check_mark", 3)
+    if event == "rule_removed" and p.get("kind") == "keyword":
+        return Alert("Keyword removed", f"'{p.get('value', '')}' is no longer a blocked search keyword.", "wastebasket", 3)
+    if event == "app_always_allowed":
+        name = p.get("label") or p.get("package", "An app")
+        return Alert("App always allowed", f"{name} can no longer be locked by app blocks or schedules.", "unlock", 3)
     if event == "rule_removed":
         kind = "whitelist" if p.get("kind") == "allow" else "blocklist"
         return Alert("Rule removed", f"{p.get('value', 'A site')} was removed from the {kind}.", "wastebasket", 3)
@@ -68,6 +73,13 @@ def describe(event: str, payload: dict) -> Alert:
         return Alert("Protection switched off", f"{what[:1].upper()}{what[1:]} was switched off.", "rotating_light", 4)
     if event == "tamper":
         return Alert("Tampering detected", p.get("what") or "GuardPulse's data was changed outside the app.", "rotating_light", 5)
+    if event == "sync_loosened":
+        items = list(p.get("items") or [])
+        more = f" (+{len(items) - 5} more)" if len(items) > 5 else ""
+        return Alert(
+            "Change synced from another phone",
+            "Synced onto this phone: " + "; ".join(items[:5]) + more + ".", "arrows_counterclockwise", 3,
+        )
     if event == "test":
         return Alert("GuardPulse test alert", "Alerts are working - you'll get a message like this when something changes.", "bell", 3)
     return Alert("GuardPulse", event.replace("_", " "), "bell", 3)

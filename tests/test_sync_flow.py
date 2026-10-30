@@ -163,6 +163,120 @@ class SyncFlowTests(unittest.TestCase):
         self.sa.sync_now()  # sealed base rejected -> union merge, nothing lost
         self.assertIn("reddit.com", [r.value for r in self.a.rules("block")])
 
+    def blocks(self, guard):
+        return [r.value for r in guard.rules("block")]
+
+    def test_old_copy_put_back_is_refused_and_reported(self):
+        self.pair_b()
+        old_copy = self.cloud.docs["uid-ethan"]
+        self.a.add_block("later.com")  # partner adds a rule after the copy was saved
+        self.a.unlock(PIN)
+        self.a.set_setting("dork_guard", True)
+        self.a.lock()
+        self.sa.sync_now()
+        self.sb.sync_now()
+        self.assertIn("later.com", self.blocks(self.b))
+        blob, rev, stamp = self.cloud.docs["uid-ethan"]
+        self.cloud.docs["uid-ethan"] = (old_copy[0], rev + 99, stamp)  # replay, plaintext rev faked higher
+        self.sb.sync_now()
+        self.assertIn("later.com", self.blocks(self.b))  # nothing removed
+        self.assertTrue(self.b.tampered)
+        self.assertIn("tamper", [r["event"] for r in self.b.pending_alerts()])
+        self.sa.sync_now()  # B healed the cloud copy; A keeps everything and sees no rollback
+        self.assertIn("later.com", self.blocks(self.a))
+        self.assertFalse(self.a.tampered)
+
+    def test_split_history_never_removes_rules(self):
+        self.pair_b()
+        replayable = self.cloud.docs["uid-ethan"]
+        self.b.add_block("partner-added.com")  # B moves ahead; A hasn't seen it
+        self.sb.sync_now()
+        self.cloud.docs["uid-ethan"] = replayable  # older copy put back...
+        self.a.add_block("a-side.com")
+        self.sa.sync_now()  # ...A builds on top of it
+        self.sb.sync_now()
+        self.assertIn("partner-added.com", self.blocks(self.b))
+        self.assertIn("a-side.com", self.blocks(self.b))
+        self.sa.sync_now()
+        self.assertIn("partner-added.com", self.blocks(self.a))
+        self.assertIn("a-side.com", self.blocks(self.a))
+
+    def test_replayed_whitelist_is_not_restored(self):
+        self.a.unlock(PIN)
+        self.a.add_allow("ok.example")
+        self.a.lock()
+        self.pair_b()
+        with_allow = self.cloud.docs["uid-ethan"]
+        self.b.unlock(PIN)
+        self.b.remove_rule(self.b.rules("allow")[0].id)
+        self.b.lock()
+        self.sb.sync_now()
+        self.cloud.docs["uid-ethan"] = with_allow
+        self.sb.sync_now()
+        self.assertEqual(self.b.rules("allow"), [])
+
+    def test_loosening_from_sync_is_logged_and_alerted(self):
+        self.pair_b()
+        self.a.unlock(PIN)
+        self.a.remove_rule(self.a.rules("block")[0].id)
+        self.a.lock()
+        self.sa.sync_now()
+        self.sb.sync_now()
+        self.assertEqual(self.blocks(self.b), [])
+        self.assertIn("sync.loosened", [r["action"] for r in self.b.history(50)])
+        alerts = [r for r in self.b.pending_alerts() if r["event"] == "sync_loosened"]
+        self.assertEqual(len(alerts), 1)
+        self.assertIn("reddit.com unblocked", alerts[0]["payload"])
+
+    def test_copy_from_before_v1_is_upgraded(self):
+        import json
+
+        from guardpulse.sync import crypto, state
+
+        self.sa.sign_in("ethan")
+        key, uid = self.sa.key, "uid-ethan"
+        legacy = crypto.open_(key, uid, self.cloud.docs[uid][0])
+        legacy.pop("rev")
+        legacy.pop("lineage")
+        blob, rev, stamp = self.cloud.docs[uid]
+        self.cloud.docs[uid] = (crypto.seal(key, uid, legacy), rev, stamp)
+        base = self.a.folder / "sync_base.json"
+        raw = json.loads(base.read_text())
+        body = json.dumps(raw["state"], sort_keys=True).encode()
+        from guardpulse import security
+
+        base.write_text(json.dumps({"state": raw["state"], "seal": security.seal(self.a.keys.get_key(), body)}))
+        self.sa.sync_now()
+        self.assertFalse(self.a.tampered)
+        upgraded = crypto.open_(key, uid, self.cloud.docs[uid][0])
+        self.assertIn("lineage", upgraded)
+        self.assertEqual(state.digest(upgraded), state.digest(legacy))
+
+    def test_keywords_and_always_allow_sync(self):
+        self.pair_b()
+        self.a.add_keyword("casino")
+        self.a.unlock(PIN)
+        self.a.add_always_allow("com.bible.app", "Bible")
+        self.a.lock()
+        self.sa.sync_now()
+        self.sb.sync_now()
+        self.assertEqual(self.b.keywords(), ["casino"])
+        self.assertEqual(self.b.always_allowed(), ["com.bible.app"])
+        alert = next(r for r in self.b.pending_alerts() if r["event"] == "sync_loosened")
+        self.assertIn("com.bible.app always allowed", alert["payload"])
+
+    def test_replayed_always_allow_is_not_restored(self):
+        self.a.unlock(PIN)
+        self.a.add_always_allow("com.bible.app", "Bible")
+        self.a.lock()
+        self.pair_b()
+        old_copy = self.cloud.docs["uid-ethan"]
+        self.b.remove_rule(self.b.rules("app_allow")[0].id)  # stricter: free
+        self.sb.sync_now()
+        self.cloud.docs["uid-ethan"] = old_copy
+        self.sb.sync_now()
+        self.assertEqual(self.b.always_allowed(), [])
+
     def test_async_twins_match(self):
         import asyncio
 

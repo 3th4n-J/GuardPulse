@@ -6,7 +6,15 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /users/{uid}/guardpulse/{doc} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read: if request.auth != null && request.auth.uid == uid;
+      // one "state" document per account, only {blob, rev}, capped in size so
+      // the free quota can't be filled up; the app never deletes it
+      allow create, update: if request.auth != null && request.auth.uid == uid
+        && doc == 'state'
+        && request.resource.data.keys().hasOnly(['blob', 'rev'])
+        && request.resource.data.blob is string
+        && request.resource.data.blob.size() <= 400000
+        && request.resource.data.rev is int;
     }
     // everything else is closed
     match /{document=**} {

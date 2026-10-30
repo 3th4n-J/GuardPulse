@@ -37,6 +37,21 @@ FEEDS = (
     ("feed_snapchat_spotlight", "Snapchat Spotlight", ft.Icons.FLASH_ON_OUTLINED),
 )
 
+SITE_HELP = {
+    "block": "Every block is a wildcard: example.com also blocks www., m. and any other "
+    "sub-domain (same as *.example.com). Adding a block never needs a PIN.",
+    "allow": "Whitelisted sites are always allowed, even if a broader block or Family DNS "
+    "would stop them. Whitelisting needs your partner's PIN.",
+    "keyword": "Any search containing a keyword is blocked in every browser and search engine, "
+    "and so is any site with it in its name. Adding is free; removing needs your partner.",
+}
+SITE_COUNT = {"block": "blocked", "allow": "whitelisted", "keyword": "keywords"}
+SITE_ICONS = {
+    "block": (ft.Icons.BLOCK, theme.DANGER),
+    "allow": (ft.Icons.CHECK_CIRCLE_OUTLINE, theme.PULSE),
+    "keyword": (ft.Icons.MANAGE_SEARCH, theme.AMBER),
+}
+
 ACTION_LABELS = {
     "partner.setup": ("Partner set up", ft.Icons.HANDSHAKE_OUTLINED),
     "unlock": ("Unlocked", ft.Icons.LOCK_OPEN),
@@ -45,6 +60,10 @@ ACTION_LABELS = {
     "block.removed": ("Block removed", ft.Icons.REMOVE_CIRCLE_OUTLINE),
     "allow.added": ("Site whitelisted", ft.Icons.CHECK_CIRCLE_OUTLINE),
     "allow.removed": ("Whitelist removed", ft.Icons.REMOVE_CIRCLE_OUTLINE),
+    "keyword.added": ("Keyword blocked", ft.Icons.MANAGE_SEARCH),
+    "keyword.removed": ("Keyword removed", ft.Icons.REMOVE_CIRCLE_OUTLINE),
+    "app_allow.added": ("App always allowed", ft.Icons.VERIFIED_OUTLINED),
+    "app_allow.removed": ("Always-allow removed", ft.Icons.REMOVE_CIRCLE_OUTLINE),
     "app.blocked": ("App blocked", ft.Icons.APP_BLOCKING_OUTLINED),
     "app.unblocked": ("App unblocked", ft.Icons.REMOVE_CIRCLE_OUTLINE),
     "schedule.added": ("Schedule added", ft.Icons.SCHEDULE),
@@ -66,6 +85,7 @@ ACTION_LABELS = {
     "sync.paired": ("Phone paired for sync", ft.Icons.PHONELINK),
     "sync.pair_code_shown": ("Pairing code shown", ft.Icons.QR_CODE_2),
     "sync.applied": ("Synced from another phone", ft.Icons.SYNC),
+    "sync.loosened": ("Loosened by sync", ft.Icons.SYNC_PROBLEM),
     "sync.signed_out": ("Sync turned off", ft.Icons.SYNC_DISABLED),
     "alerts.topic_created": ("Partner alerts set up", ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED),
     "alerts.topic_changed": ("Partner alert link changed", ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED),
@@ -446,9 +466,10 @@ def sites(app: App) -> list[ft.Control]:
         app.render()
 
     field = theme.text_field(
-        hint_text="example.com, *.example.com or a full link",
-        prefix_icon=ft.Icons.LINK,
-        keyboard_type=ft.KeyboardType.URL,
+        hint_text="A word or phrase, e.g. casino" if kind == "keyword"
+        else "example.com, *.example.com or a full link",
+        prefix_icon=ft.Icons.MANAGE_SEARCH if kind == "keyword" else ft.Icons.LINK,
+        keyboard_type=ft.KeyboardType.TEXT if kind == "keyword" else ft.KeyboardType.URL,
         expand=True,
         autocorrect=False,
         enable_suggestions=False,
@@ -458,6 +479,8 @@ def sites(app: App) -> list[ft.Control]:
         value = field.value or ""
         if kind == "block":
             app.act(lambda: g.add_block(value), "Blocked")
+        elif kind == "keyword":
+            app.act(lambda: g.add_keyword(value), "Keyword blocked")
         else:
             app.act(lambda: g.add_allow(value), "Whitelisted")
 
@@ -470,39 +493,34 @@ def sites(app: App) -> list[ft.Control]:
             segments=[
                 ft.Segment(value="block", label=ft.Text("Blacklist"), icon=ft.Icon(ft.Icons.BLOCK)),
                 ft.Segment(value="allow", label=ft.Text("Whitelist"), icon=ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE)),
+                ft.Segment(value="keyword", label=ft.Text("Keywords"), icon=ft.Icon(ft.Icons.MANAGE_SEARCH)),
             ],
+            show_selected_icon=False,
             on_change=switch_kind,
         ),
-        ft.Text(
-            "Every block is a wildcard: example.com also blocks www., m. and any other "
-            "sub-domain (same as *.example.com). Adding a block never needs a PIN."
-            if kind == "block"
-            else "Whitelisted sites are always allowed, even if a broader block or Family DNS "
-            "would stop them. Whitelisting needs your partner's PIN.",
-            size=12,
-            color=theme.MUTED,
-        ),
+        ft.Text(SITE_HELP[kind], size=12, color=theme.MUTED),
         theme.card(
             ft.Row(
                 [
                     field,
                     ft.FilledButton(
-                        "Block" if kind == "block" else "Allow",
-                        icon=ft.Icons.ADD if kind == "block" or g.unlocked else ft.Icons.LOCK_OUTLINE,
+                        "Allow" if kind == "allow" else "Block",
+                        icon=ft.Icons.ADD if kind != "allow" or g.unlocked else ft.Icons.LOCK_OUTLINE,
                         on_click=add,
                     ),
                 ]
             ),
             padding=10,
         ),
-        theme.section_title(f"{len(rules)} {'blocked' if kind == 'block' else 'whitelisted'}"),
+        theme.section_title(f"{len(rules)} {SITE_COUNT[kind]}"),
     ]
+    icon, color = SITE_ICONS[kind]
     if not rules:
         out.append(
             theme.empty_state(
-                ft.Icons.BLOCK if kind == "block" else ft.Icons.CHECK_CIRCLE_OUTLINE,
-                "No sites yet",
-                "Add one above." if kind == "block" else "Ask your partner before adding one.",
+                icon,
+                "No keywords yet" if kind == "keyword" else "No sites yet",
+                "Ask your partner before adding one." if kind == "allow" else "Add one above.",
             )
         )
     else:
@@ -511,11 +529,12 @@ def sites(app: App) -> list[ft.Control]:
                 ft.Column(
                     [
                         ft.ListTile(
-                            leading=ft.Icon(
-                                ft.Icons.BLOCK if kind == "block" else ft.Icons.CHECK_CIRCLE_OUTLINE,
-                                color=theme.DANGER if kind == "block" else theme.PULSE,
+                            leading=ft.Icon(icon, color=color),
+                            # long links end in "..." instead of wrapping onto several lines
+                            title=ft.Text(
+                                r.value, color=theme.TEXT, max_lines=1, no_wrap=True,
+                                overflow=ft.TextOverflow.ELLIPSIS, tooltip=r.value,
                             ),
-                            title=ft.Text(r.value, color=theme.TEXT),
                             subtitle=ft.Text(f"Added {_when(r.created_at)}", size=12, color=theme.MUTED),
                             trailing=_remove_button(
                                 app, "Remove", lambda _, rid=r.id: app.act(lambda: g.remove_rule(rid), "Removed")
@@ -672,7 +691,105 @@ def apps(app: App) -> list[ft.Control]:
                 padding=4,
             )
         )
+    return out + _always_allow_section(app)
+
+
+def _always_allow_section(app: App) -> list[ft.Control]:
+    """Apps no block or schedule can lock: Bible, banking, phone, maps..."""
+    g = app.guard
+    allowed = g.rules("app_allow")
+    labels = _app_labels(app)
+    out: list[ft.Control] = [
+        theme.section_title(f"{len(allowed)} always allowed", ft.Icons.VERIFIED_OUTLINED),
+        ft.Text(
+            "Important apps (Bible, banking, phone, maps) that app blocks and schedules never lock. "
+            "Adding one needs your partner; removing is free.",
+            size=12,
+            color=theme.MUTED,
+        ),
+        ft.OutlinedButton(
+            "Choose apps to always allow",
+            icon=ft.Icons.ADD if g.unlocked or not g.is_setup else ft.Icons.LOCK_OUTLINE,
+            height=44,
+            on_click=lambda _: app.act(lambda: _open_always_allow(app)),
+            visible=app.native.available,
+        ),
+    ]
+    if allowed:
+        out.append(
+            theme.card(
+                ft.Column(
+                    [
+                        ft.ListTile(
+                            leading=_app_icon(app, r.value, labels.get(r.value, r.value), 32),
+                            title=ft.Text(
+                                labels.get(r.value, r.value), color=theme.TEXT, max_lines=1,
+                                overflow=ft.TextOverflow.ELLIPSIS,
+                            ),
+                            subtitle=ft.Text(
+                                r.value, size=12, color=theme.MUTED, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS
+                            ),
+                            trailing=ft.IconButton(
+                                icon=ft.Icons.REMOVE_CIRCLE_OUTLINE,
+                                icon_color=theme.MUTED,
+                                tooltip="Stop always allowing",
+                                on_click=lambda _, rid=r.id: app.act(lambda: g.remove_rule(rid), "No longer always allowed"),
+                            ),
+                            dense=True,
+                        )
+                        for r in allowed
+                    ],
+                    spacing=0,
+                ),
+                padding=4,
+            )
+        )
     return out
+
+
+def _open_always_allow(app: App) -> None:
+    if app.guard.is_setup:
+        _require_unlocked(app, "always allow an app")  # ask for the PIN before, not after, picking
+    _open_after_loading_apps(app, _always_allow_picker)
+
+
+def _always_allow_picker(app: App) -> None:
+    g = app.guard
+    already = set(g.always_allowed())
+    choices = {a["package"]: a["label"] for a in app.native.installed_apps if a["package"] not in already}
+    picked: set[str] = set()
+    search, checklist = _app_checklist(choices, picked, lambda p, l: _app_icon(app, p, l, 24))
+
+    def save(_):
+        try:
+            for pkg in sorted(picked):
+                g.add_always_allow(pkg, choices[pkg])
+        except GuardError as exc:
+            app.toast(str(exc), error=True)
+        app.close_dialog()
+        if picked:
+            app.toast(f"{len(picked)} app{'s' if len(picked) != 1 else ''} always allowed")
+        app.render()
+
+    app.open_dialog(
+        ft.AlertDialog(
+            title=ft.Text("Always allow apps"),
+            content=ft.Column(
+                [
+                    ft.Text("These can't be locked by app blocks or schedules.", size=12, color=theme.MUTED),
+                    search,
+                    checklist,
+                ],
+                tight=True,
+                spacing=8,
+                width=360,
+            ),
+            actions=[
+                ft.TextButton("Cancel", on_click=lambda _: app.close_dialog()),
+                ft.FilledButton("Always allow", icon=ft.Icons.VERIFIED_OUTLINED, on_click=save),
+            ],
+        )
+    )
 
 
 # --- Schedule --------------------------------------------------------------
@@ -697,7 +814,7 @@ def schedule(app: App) -> list[ft.Control]:
     ]
     if not rows:
         out.append(theme.empty_state(ft.Icons.SCHEDULE, "No schedules", "Create one to lock apps on a timer."))
-        return out
+        return out + _always_allow_section(app)
     if app.native.available and not app.native.apps_tried:
         # fetch installed-app names once so cards say "Brave", not "com.brave.browser"
         async def load_names():
@@ -743,9 +860,12 @@ def schedule(app: App) -> list[ft.Control]:
                         ft.Row(
                             [
                                 ft.Text(
-                                    ", ".join(labels.get(p, p) for p in s.packages),
+                                    ", ".join(labels.get(p, p) for p in s.packages)
+                                    + ("  (always allowed apps skipped)" if set(s.packages) & set(g.always_allowed()) else ""),
                                     size=12,
                                     color=theme.MUTED,
+                                    max_lines=2,
+                                    overflow=ft.TextOverflow.ELLIPSIS,
                                     expand=True,
                                 ),
                                 ft.IconButton(
@@ -769,7 +889,7 @@ def schedule(app: App) -> list[ft.Control]:
                 padding=14,
             )
         )
-    return out
+    return out + _always_allow_section(app)
 
 
 def _app_labels(app: App) -> dict[str, str]:
@@ -844,6 +964,8 @@ def _schedule_dialog(app: App, existing: Schedule | None = None) -> None:
         | {a["package"]: a["label"] for a in app.native.installed_apps}
         | {a.package: a.label for a in g.blocked_apps()}
     )
+    # always-allowed apps can't be locked, so they aren't offered
+    choices = {p: label for p, label in choices.items() if p not in g.always_allowed()}
     # an edited schedule's apps must stay visible (and ticked) even if not installed any more
     choices = {p: _app_labels(app).get(p, p) for p in state["apps"]} | choices
     search, checklist = _app_checklist(choices, state["apps"], lambda p, l: _app_icon(app, p, l, 24))
@@ -968,7 +1090,7 @@ def _open_after_loading_apps(app: App, opener) -> None:
 
 def _installed_picker(app: App) -> None:
     g = app.guard
-    already = {a.package for a in g.blocked_apps()}
+    already = {a.package for a in g.blocked_apps()} | set(g.always_allowed())
     choices = {a["package"]: a["label"] for a in app.native.installed_apps if a["package"] not in already}
     picked: set[str] = set()
     search, checklist = _app_checklist(choices, picked, lambda p, l: _app_icon(app, p, l, 24))
@@ -1034,8 +1156,8 @@ def settings(app: App) -> list[ft.Control]:
         ),
     )
 
-    out: list[ft.Control] = [
-        theme.section_title("Protection", ft.Icons.SHIELD_OUTLINED),
+    out: list[ft.Control] = []
+    out += _section(app, "protection", "Protection", ft.Icons.SHIELD_OUTLINED, [
         theme.card(
             ft.Column(
                 [
@@ -1059,11 +1181,10 @@ def settings(app: App) -> list[ft.Control]:
             ),
             padding=4,
         ),
-        theme.section_title("Partner", ft.Icons.HANDSHAKE_OUTLINED),
-    ]
+    ])
 
     if partner is None:
-        out.append(
+        partner_body = (
             theme.card(
                 ft.Row(
                     [
@@ -1074,7 +1195,7 @@ def settings(app: App) -> list[ft.Control]:
             )
         )
     else:
-        out.append(
+        partner_body = (
             theme.card(
                 ft.Column(
                     [
@@ -1118,17 +1239,54 @@ def settings(app: App) -> list[ft.Control]:
             )
         )
 
-    out += [theme.section_title("Partner alerts", ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED), _alerts_card(app)]
-    out += [theme.section_title("Sync across phones", ft.Icons.SYNC), _sync_card(app)]
-    out += [theme.section_title("Activity log", ft.Icons.HISTORY)]
+    out += _section(app, "partner", "Partner", ft.Icons.HANDSHAKE_OUTLINED, [partner_body])
+    out += _section(app, "alerts", "Partner alerts", ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED, [_alerts_card(app)])
+    out += _section(app, "sync", "Sync across phones", ft.Icons.SYNC, [_sync_card(app)])
     rows = g.history(30)
-    out.append(
+    out += _section(app, "activity", "Activity log", ft.Icons.HISTORY, [
         theme.card(ft.Column([_activity_tile(r) for r in rows], spacing=0), padding=4)
         if rows
         else theme.empty_state(ft.Icons.HISTORY, "Nothing yet", "Every change is recorded here.")
-    )
-    out += [theme.section_title("About", ft.Icons.INFO_OUTLINE), _about_card(app)]
+    ])
+    out += _section(app, "about", "About", ft.Icons.INFO_OUTLINE, [_about_card(app)])
     return out
+
+
+def _section(app: App, key: str, title: str, icon: ft.IconData, body: list[ft.Control]) -> list[ft.Control]:
+    """A Settings section that folds away; only Protection starts open. Remembered while the app runs."""
+    opened = getattr(app, "open_sections", None)
+    if opened is None:
+        opened = app.open_sections = {"protection"}
+    is_open = key in opened
+    chevron = ft.Icon(ft.Icons.EXPAND_LESS if is_open else ft.Icons.EXPAND_MORE, color=theme.MUTED)
+    for control in body:
+        control.visible = is_open
+
+    def toggle(_):
+        now_open = key not in opened
+        (opened.add if now_open else opened.discard)(key)
+        chevron.icon = ft.Icons.EXPAND_LESS if now_open else ft.Icons.EXPAND_MORE
+        for control in body:
+            control.visible = now_open
+        app.page.update()
+
+    header = ft.Container(
+        ft.Row(
+            [
+                ft.Icon(icon, size=18, color=theme.CYAN),
+                ft.Text(title, weight=ft.FontWeight.W_700, color=theme.TEXT, expand=True),
+                chevron,
+            ],
+            spacing=10,
+        ),
+        padding=ft.Padding.symmetric(horizontal=14, vertical=12),
+        bgcolor=theme.SURFACE,
+        border=ft.Border.all(1, theme.OUTLINE),
+        border_radius=14,
+        ink=True,
+        on_click=toggle,
+    )
+    return [header, *body]
 
 
 def _about_card(app: App) -> ft.Control:
@@ -1174,7 +1332,7 @@ def _about_card(app: App) -> ft.Control:
                 fact(ft.Icons.VOLUNTEER_ACTIVISM_OUTLINED, "Free forever - no ads, no subscriptions, no accounts"),
                 fact(ft.Icons.DNS_OUTLINED, f"Filtering by Cloudflare 1.1.1.1 for Families ({' / '.join(FAMILY_DNS_V4)})"),
                 fact(ft.Icons.LOCK_OUTLINE, "Rules sealed with HMAC-SHA256, PIN stored as a scrypt hash"),
-                fact(ft.Icons.PHONE_ANDROID, "Everything stays on this phone"),
+                fact(ft.Icons.PHONE_ANDROID, "Everything stays on this phone, unless you turn on end-to-end encrypted sync"),
                 ft.TextButton(
                     "Source on GitHub",
                     icon=ft.Icons.CODE,
@@ -1188,6 +1346,11 @@ def _about_card(app: App) -> ft.Control:
                     size=12,
                     color=theme.MUTED,
                     text_align=ft.TextAlign.CENTER,
+                ),
+                ft.TextButton(
+                    "ethan@s-techsolutions.co.za",
+                    icon=ft.Icons.MAIL_OUTLINE,
+                    url="mailto:ethan@s-techsolutions.co.za",
                 ),
             ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,

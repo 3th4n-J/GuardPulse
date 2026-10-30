@@ -63,6 +63,23 @@ PROTECTIVE_FLAGS = {
     "dork_guard",
 }
 UNLOCK_MINUTES_RANGE = (1, 30)
+KEYWORD_LIMITS = (3, 40)  # characters; shorter words would block far too much
+_NOT_WORD = re.compile(r"[^0-9a-z\u00c0-\uffff]+")
+
+
+def normalize_keyword(raw: str) -> str:
+    """Lower-case words separated by single spaces ("Free  Porn!" -> "free porn")."""
+    text = _NOT_WORD.sub(" ", (raw or "").lower()).strip()
+    low, high = KEYWORD_LIMITS
+    if not low <= len(text) <= high:
+        raise GuardError(f"A keyword is {low}-{high} letters or digits.")
+    return text
+
+
+def keyword_in(text: str, keywords: list[str]) -> str | None:
+    """The first keyword found in ``text`` (any punctuation counts as a space)."""
+    flat = " " + _NOT_WORD.sub(" ", (text or "").lower()).strip() + " "
+    return next((k for k in keywords if k in flat), None)
 
 # Cloudflare 1.1.1.1 for Families - "malware + adult content" resolvers.
 FAMILY_DNS_V4 = ("1.1.1.3", "1.0.0.3")
@@ -206,12 +223,13 @@ class Guard:
         """Stamp partner changes so two phones' edits can be ordered when merging."""
         self.set_meta("partner_changed_at", repr(self.clock()))
 
-    def apply_synced(self, state: dict) -> None:
+    def apply_synced(self, state: dict, loosened: list[str] = ()) -> None:
         """Make protected state match a merged sync snapshot.
 
         No ratchet check here: every loosening in ``state`` was approved with the
         partner PIN on the phone that made it, and the snapshot is end-to-end
-        encrypted + authenticated with a key only paired phones hold.
+        encrypted + authenticated with a key only paired phones hold. What it does
+        loosen on THIS phone (``loosened``) is still logged and sent to the partner.
         """
         partner = state.get("partner")
         with self._tx():
@@ -254,6 +272,10 @@ class Guard:
                     (self.folder / "pin.verify").write_bytes(payload)
                     (self.folder / "pin.verify.sig").write_text(security.seal(self.keys.get_key(), payload))
             self._audit("sync.applied", f"{len(state.get('rules', []))} rules, {len(state.get('apps', []))} apps")
+            for line in loosened:
+                self._audit("sync.loosened", line)
+            if loosened:
+                self._queue("sync_loosened", {"items": list(loosened)})
 
     def import_activity(self, entries: list[dict]) -> int:
         """Add other phones' activity (by unique key); returns how many were new."""
@@ -442,11 +464,14 @@ class Guard:
         row = self.conn.execute("SELECT kind, value FROM rules WHERE id = ?", (rule_id,)).fetchone()
         if row is None:
             return
-        self._require(f"remove {row['value']}")
+        stricter = row["kind"] == "app_allow"  # taking an app off "always allow" is free
+        if not stricter:
+            self._require(f"remove {row['value']}")
         with self._tx():
             self.conn.execute("DELETE FROM rules WHERE id = ?", (rule_id,))
-            self._audit(f"{row['kind']}.removed", row["value"], self._unlocked_by)
-            self._queue("rule_removed", {"kind": row["kind"], "value": row["value"]})
+            self._audit(f"{row['kind']}.removed", row["value"], "none" if stricter else self._unlocked_by)
+            if not stricter:
+                self._queue("rule_removed", {"kind": row["kind"], "value": row["value"]})
 
     def decide(self, host_or_url: str) -> str:
         """``"block"``, ``"allow"`` or ``"default"`` (fall through to Family DNS)."""
@@ -454,10 +479,20 @@ class Guard:
         block = most_specific(host, [r.value for r in self.rules("block")])
         allow = most_specific(host, [r.value for r in self.rules("allow")])
         if block is None and allow is None:
-            return "default"
+            # a site whose name contains a blocked keyword (free-porn-site.com)
+            return "block" if keyword_in(host, self.keywords()) else "default"
         if allow is not None and (block is None or len(allow) >= len(block)):
             return "allow"
         return "block"
+
+    # --- search keywords ---------------------------------------------------
+
+    def keywords(self) -> list[str]:
+        return [r.value for r in self.rules("keyword")]
+
+    def add_keyword(self, raw: str) -> Rule:
+        """Searches and site names containing it get blocked. Adding is always free."""
+        return self._add_rule("keyword", normalize_keyword(raw))
 
     # --- apps --------------------------------------------------------------
 
@@ -488,7 +523,19 @@ class Guard:
             self._audit("app.unblocked", row["package"], self._unlocked_by)
             self._queue("app_unblocked", {"package": row["package"]})
 
+    def always_allowed(self) -> list[str]:
+        """Apps that app blocks and schedules never cover (Bible, banking, phone...)."""
+        return [r.value for r in self.rules("app_allow")]
+
+    def add_always_allow(self, package: str, label: str = "") -> Rule:
+        package = normalize_package(package)
+        label = (label or "").strip() or package
+        self._require(f"always allow {label}")
+        return self._add_rule("app_allow", package, label=label)
+
     def is_app_blocked(self, package: str, moment: datetime | None = None) -> bool:
+        if package in self.always_allowed():
+            return False
         if self.conn.execute("SELECT 1 FROM apps WHERE package = ?", (package,)).fetchone():
             return True
         moment = moment or datetime.fromtimestamp(self.clock())
@@ -738,6 +785,8 @@ class Guard:
             "block": [r.value for r in self.rules("block")],
             "allow": [r.value for r in self.rules("allow")],
             "apps": [a.package for a in self.blocked_apps()],
+            "keywords": self.keywords(),
+            "always_allow": self.always_allowed(),
             "schedules": [
                 {
                     "days": s.days,
@@ -785,6 +834,7 @@ class Guard:
         return {
             "blocked_sites": q("SELECT COUNT(*) FROM rules WHERE kind = 'block'").fetchone()[0],
             "allowed_sites": q("SELECT COUNT(*) FROM rules WHERE kind = 'allow'").fetchone()[0],
+            "keywords": q("SELECT COUNT(*) FROM rules WHERE kind = 'keyword'").fetchone()[0],
             "blocked_apps": q("SELECT COUNT(*) FROM apps").fetchone()[0],
             "schedules": q("SELECT COUNT(*) FROM schedules WHERE enabled = 1").fetchone()[0],
         }
@@ -795,16 +845,19 @@ class Guard:
         if not self.unlocked:
             raise Locked(action)
 
-    def _add_rule(self, kind: str, host: str) -> Rule:
+    def _add_rule(self, kind: str, host: str, label: str = "") -> Rule:
+        free = kind in ("block", "keyword")  # stricter: no PIN needed
         with self._tx():
             cur = self.conn.execute(
                 "INSERT OR IGNORE INTO rules (kind, value, created_at) VALUES (?, ?, ?)",
                 (kind, host, self.clock()),
             )
             if cur.rowcount:
-                self._audit(f"{kind}.added", host, "none" if kind == "block" else self._unlocked_by)
+                self._audit(f"{kind}.added", label or host, "none" if free else self._unlocked_by)
                 if kind == "allow":
                     self._queue("whitelisted", {"value": host})
+                elif kind == "app_allow":
+                    self._queue("app_always_allowed", {"package": host, "label": label or host})
         row = self.conn.execute(
             "SELECT id, kind, value, created_at FROM rules WHERE kind = ? AND value = ?", (kind, host)
         ).fetchone()
